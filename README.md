@@ -74,16 +74,6 @@ python main.py
 
 跨数据库转换导出为 WoS 风格 TXT 后，仍应在 VOSviewer、CiteSpace 等目标软件中抽样验证字段和记录数，尤其是引用、机构和参考文献字段。
 
-## 开发与打包
-
-```powershell
-python -m unittest discover -s tests
-cd vosviewer_frontend
-node --test
-```
-
-`packaging/build_release.ps1` 可构建单文件版或快速启动文件夹版，但它依赖本机预先准备的 PyInstaller 环境、Node.js 工作簿运行库及已构建的 VOS 前端，不属于“克隆后直接打包”的通用脚本。详见 [历史说明](docs/legacy-readme.md) 中的版本记录和操作细节。
-
 ## 许可证
 
 本项目自有代码采用 [BSD 3-Clause 许可证](LICENSE)。仓库中随附的 `xlrd` 代码仍按其[原许可证](wos_filter/_vendor/xlrd-LICENSE.txt)使用；通过 npm 安装的 VOSviewer Online 及其他依赖仍按各自许可证使用，发布打包时会收集其许可文本。BSD 3-Clause 不替代第三方组件的许可。
