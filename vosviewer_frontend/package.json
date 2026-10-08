@@ -1,0 +1,17 @@
+{
+  "name": "mannul-vosviewer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "vosviewer-online": "1.2.4"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

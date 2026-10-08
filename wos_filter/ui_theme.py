@@ -1,0 +1,13 @@
+"""Shared, restrained blue-green desktop palette."""
+
+BG = "#F5F8F8"
+SURFACE = "#FFFFFF"
+SIDEBAR = "#F0F6F5"
+TEXT = "#1D3035"
+MUTED = "#63777B"
+ACCENT = "#238D87"
+ACCENT_HOVER = "#197A75"
+ACCENT_SOFT = "#E4F2F0"
+BORDER = "#D8E5E3"
+DANGER = "#A44C46"
+FONT = "Microsoft YaHei UI"

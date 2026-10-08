@@ -1,0 +1,12 @@
+{
+  "keywords": [],
+  "organizations": [
+    {"target": "北京大学", "variants": ["Peking University", "北京大学"]}
+  ],
+  "countries": [
+    {"target": "中国", "variants": ["PR China", "China", "中国"]}
+  ],
+  "authors": [],
+  "journals": [],
+  "autoKeywordExclusions": []
+}
