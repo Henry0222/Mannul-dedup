@@ -84,4 +84,6 @@ node --test
 
 `packaging/build_release.ps1` 可构建单文件版或快速启动文件夹版，但它依赖本机预先准备的 PyInstaller 环境、Node.js 工作簿运行库及已构建的 VOS 前端，不属于“克隆后直接打包”的通用脚本。详见 [历史说明](docs/legacy-readme.md) 中的版本记录和操作细节。
 
-本仓库包含第三方 `xlrd` 源码及许可文本；VOSviewer Online 前端通过 npm 安装，其许可文本在发布打包时收集。当前仓库未附项目自身的开源许可证，使用或再分发前应先确认授权范围。
+## 许可证
+
+本项目自有代码采用 [BSD 3-Clause 许可证](LICENSE)。仓库中随附的 `xlrd` 代码仍按其[原许可证](wos_filter/_vendor/xlrd-LICENSE.txt)使用；通过 npm 安装的 VOSviewer Online 及其他依赖仍按各自许可证使用，发布打包时会收集其许可文本。BSD 3-Clause 不替代第三方组件的许可。
