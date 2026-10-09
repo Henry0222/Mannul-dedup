@@ -174,7 +174,7 @@ class PlotWorkbench(ttk.Frame):
         self._check(labels, "显示数据标签", self.show_labels_var)
         self._entry(labels, "整体字体大小（8–30）", self.base_size_var)
         self._entry(labels, "数据标签大小（1–20）", self.label_size_var)
-        self._entry(labels, "数值标签间隔（0 自动，1 每年）", self.label_interval_var)
+        self._entry(labels, "数值标签间隔（1 每年；0 自动省略部分）", self.label_interval_var)
         self._entry(labels, "年份文字角度（0–90）", self.year_angle_var)
         self._entry(labels, "机构名称角度（0–90）", self.institution_angle_var)
 
@@ -483,9 +483,15 @@ class PlotWorkbench(ttk.Frame):
                 citation_note = f" · 被引次数仅覆盖 {available}/{len(records)} 条，其余未提供"
             if options.metric == "citations":
                 records = [record for record in records if has_citation_count(record)]
+        label_note = ""
+        if options.view == "trend" and options.show_labels:
+            if options.label_interval == 0:
+                label_note = " · 自动避让会省略部分年份数值标签；设为 1 可显示每年非零值"
+            elif options.label_interval > 1:
+                label_note = f" · 数值标签每 {options.label_interval} 年显示一次"
         self.status_var.set(
             f"{self.scope_var.get()} · {self.source_var.get()} · {format_year_range(start, end)}："
-            f"{len(records)} 条题录，{sum(publication_year(r) is None for r in records)} 条年份未知{citation_note}。"
+            f"{len(records)} 条题录，{sum(publication_year(r) is None for r in records)} 条年份未知{citation_note}{label_note}。"
         )
         try:
             self.rows = prepare_plot_data(records, options)
@@ -711,10 +717,14 @@ class PlotWorkbench(ttk.Frame):
         result["text_offsets"] = self.text_offsets
         result["legend_positions"] = self.legend_positions
         result["legend_names"] = self.legend_names.copy()
+        result["label_interval_version"] = 2
         return result
 
     def load_settings(self, data: dict | None) -> None:
-        data = data or {}
+        data = dict(data or {})
+        if data.get("label_interval_version", 1) < 2 and str(data.get("label_interval", "")) == "0":
+            data["label_interval"] = "1"
+        data.setdefault("label_interval", "1")
         if data.get("palette") == "经典蓝橙" and data.get("colors", {}).get("papers") == "#4C78A8":
             data = {**data, "palette": "湖蓝薄荷", "colors": dict(COLOR_DEFAULTS)}
         self._building = True

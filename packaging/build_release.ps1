@@ -81,7 +81,7 @@ try {
     }
     if ($FastStart) {
         $builtFolder = Join-Path $projectRoot 'release\WOS_Literature_Filter'
-        $finalFolder = Join-Path $projectRoot 'release\WOS文献筛选工具-1.24.1-快速启动版'
+        $finalFolder = Join-Path $projectRoot 'release\WOS文献筛选工具-1.24.2-快速启动版'
         if (Test-Path -LiteralPath $finalFolder) {
             throw "快速启动版目录已存在，请先保留或移走旧目录：$finalFolder"
         }

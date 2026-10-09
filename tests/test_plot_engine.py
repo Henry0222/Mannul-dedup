@@ -100,7 +100,7 @@ class PlotEngineTests(unittest.TestCase):
                 rows.append({"year": year, "source": source, "papers": count, "citations": 0})
         figure = Figure(figsize=(10, 5))
         options = PlotOptions(chart_type="bar", trend_group="language", show_labels=True,
-                              label_size=15,
+                              label_size=15, label_interval=0,
                               show_regression=True, regression_method="quadratic",
                               legend_labels={"英文发文量": "English", "中文发文量": "中文资料"})
         render_figure(figure, rows, options)
@@ -135,10 +135,13 @@ class PlotEngineTests(unittest.TestCase):
     def test_annual_label_interval_keeps_latest_year_and_can_show_every_year(self) -> None:
         rows = [{"year": year, "source": "全部", "papers": year - 2019, "citations": 0}
                 for year in range(2020, 2030)]
-        for interval, expected in ((3, [1, 4, 7, 10]), (1, list(range(1, 11)))):
+        for interval, expected in ((3, [1, 4, 7, 10]), (1, list(range(1, 11))),
+                                   (None, list(range(1, 11)))):
             with self.subTest(interval=interval):
                 figure = Figure(figsize=(5, 4))
-                render_figure(figure, rows, PlotOptions(label_interval=interval, label_size=16))
+                options = PlotOptions(label_size=16) if interval is None else PlotOptions(
+                    label_interval=interval, label_size=16)
+                render_figure(figure, rows, options)
                 labels = [int(item.get_text()) for item in figure.axes[0].texts
                           if item.get_text().isdecimal()]
                 self.assertEqual(labels, expected)

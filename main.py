@@ -168,6 +168,10 @@ if __name__ == "__main__":
             if sum(row["papers"] for row in app.plot_workbench.rows) != 1:
                 raise RuntimeError("基础去重结果没有正确进入年度趋势")
             app.plot_workbench.label_size_var.set("15")
+            app.plot_workbench.load_settings({"label_interval": "0"})
+            if app.plot_workbench.label_interval_var.get() != "1":
+                raise RuntimeError("旧项目自动避让设置没有迁移为逐年显示")
+            app.plot_workbench.load_settings({"label_interval": "0", "label_interval_version": 2})
             app.plot_workbench.label_interval_var.set("0")
             chart_options = app.plot_workbench._plot_options()
             if chart_options.label_size != 15 or chart_options.label_interval != 0:
@@ -203,6 +207,8 @@ if __name__ == "__main__":
                 raise RuntimeError("重新加载后没有恢复去重记录")
             if app.plot_workbench.legend_names.get(edited_legend) != "Publication count":
                 raise RuntimeError("图例名称没有随项目保存")
+            if app.plot_workbench.label_interval_var.get() != "0":
+                raise RuntimeError("新版本用户主动选择自动避让没有保存")
             app.plot_workbench.refresh()
             if len(app.plot_workbench.rows) != 1 or app.plot_workbench.rows[0]["papers"] != 1:
                 raise RuntimeError("基础去重后的年度发文量不正确")

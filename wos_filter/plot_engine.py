@@ -58,7 +58,7 @@ class PlotOptions:
     show_labels: bool = True
     base_size: int = 12
     label_size: int = 9
-    label_interval: int = 0
+    label_interval: int = 1
     year_label_angle: int = 45
     institution_label_angle: int = 45
     colors: dict[str, str] | None = None
