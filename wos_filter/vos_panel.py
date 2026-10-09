@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .vos_desktop import launch_vosviewer_desktop
+from .vos_desktop import launch_vosviewer_desktop, launch_vosviewer_with_bibliography
+from .basic_export import default_output_dir
+from .analysis_scope import AI_SCOPE, ANALYSIS_SCOPES, DEDUPE_SCOPE, RAW_SCOPE
 from .vos_defaults import (BUILD_KEYS, apply_graph_defaults, graph_defaults_path,
                            preferences, save_preferences)
 from .vos_network import (CITED_TYPES, NETWORK_TYPES, build_vos_network, filter_vos_network, inherit_vos_parameters,
@@ -22,7 +25,7 @@ class VOSPanel(ttk.Frame):
         self.min_var = tk.StringVar(value="2")
         self.max_var = tk.StringVar(value="80")
         self.keyword_var = tk.StringVar(value="作者关键词")
-        self.scope_var = tk.StringVar(value="基础去重结果")
+        self.scope_var = tk.StringVar(value=DEDUPE_SCOPE)
         self.status_var = tk.StringVar(value="先预览节点并勾选，再创建图谱。")
         self.count_var = tk.StringVar(value="")
         self.data: dict | None = None
@@ -37,11 +40,11 @@ class VOSPanel(ttk.Frame):
         self.desktop_exe = ""
 
         ttk.Label(self, text="VOS 图谱", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text="基于当前项目已去重题录；节点筛选后可在内置窗口调整布局和聚类。",
+        ttk.Label(self, text="可选择全部导入题录或去重结果；节点筛选后可在内置窗口调整布局和聚类。",
                   style="Hint.TLabel").pack(anchor="w", pady=(4, 12))
         controls = ttk.LabelFrame(self, text="建图选项", padding=12)
         controls.pack(fill="x")
-        self._row(controls, "题录范围", self.scope_var, ("基础去重结果", "AI 筛选相关"))
+        self._row(controls, "题录范围", self.scope_var, ANALYSIS_SCOPES)
         self._row(controls, "图谱类型", self.kind_var, tuple(NETWORK_TYPES.values()))
         self._row(controls, "关键词来源", self.keyword_var, ("作者关键词", "作者 + Keywords Plus"))
         self._entry(controls, "最少出现次数", self.min_var)
@@ -52,9 +55,11 @@ class VOSPanel(ttk.Frame):
         ttk.Button(actions, text="刷新候选节点", command=self.refresh).pack(side="left")
         ttk.Button(actions, text="生成并打开图谱", command=self.create_map).pack(side="left", padx=8)
         ttk.Button(actions, text="打开上次图谱", command=self.reopen_last).pack(side="left")
-        ttk.Button(actions, text="VOS 桌面版（原生叠加/密度）",
+        ttk.Button(actions, text="VOS 桌面版打开当前图谱",
                    command=self.open_desktop).pack(side="left", padx=8)
         ttk.Label(actions, textvariable=self.count_var, style="Hint.TLabel").pack(side="right")
+        ttk.Button(self, text="VOS 桌面版用题录自由建图…",
+                   command=self.open_desktop_bibliography).pack(anchor="w", pady=(0, 8))
 
         table = ttk.LabelFrame(self, text="节点清单 · 点击首列纳入或排除，点击列标题排序", padding=8)
         table.pack(fill="both", expand=True)
@@ -132,7 +137,7 @@ class VOSPanel(ttk.Frame):
         for name, variable, choices in (
             ("kind", self.kind_var, NETWORK_TYPES.values()),
             ("keyword_source", self.keyword_var, ("作者关键词", "作者 + Keywords Plus")),
-            ("scope", self.scope_var, ("基础去重结果", "AI 筛选相关"))):
+            ("scope", self.scope_var, ANALYSIS_SCOPES)):
             if settings.get(name) in choices:
                 variable.set(settings[name])
         for name, variable in (("min", self.min_var), ("max", self.max_var)):
@@ -144,10 +149,11 @@ class VOSPanel(ttk.Frame):
         self._restoring = False
 
     def _records(self):
-        records, start, end = self.app._scoped_records()
-        if not self.app._dedupe_ready_for_scope(start, end):
+        raw_scope = self.scope_var.get() == RAW_SCOPE
+        records, start, end = self.app._scoped_records(include_excluded=raw_scope)
+        if not raw_scope and not self.app._dedupe_ready_for_scope(start, end):
             raise ValueError("请先完成基础去重。")
-        if self.scope_var.get() == "AI 筛选相关":
+        if self.scope_var.get() == AI_SCOPE:
             if not self.app.results or set(self.app.results) != {r.record_id for r in self.app.records}:
                 raise ValueError("当前项目尚无完整 AI 筛选结果。")
             records = [r for r in records if self.app.results[r.record_id].final_decision == "relevant"]
@@ -255,13 +261,9 @@ class VOSPanel(ttk.Frame):
             messagebox.showerror("VOS 图谱", str(exc), parent=self.app.root)
 
     def open_desktop(self):
-        executable = preferences(self.app.app_dir).get("desktop_exe", "") or self.desktop_exe
-        if not Path(executable).is_file():
-            executable = filedialog.askopenfilename(
-                parent=self.app.root, title="选择 VOSviewer 桌面版程序",
-                filetypes=[("VOSviewer 程序", "VOSviewer.exe"), ("Windows 程序", "*.exe")])
-            if not executable:
-                return
+        executable = self._desktop_program()
+        if not executable:
+            return
         try:
             path, data, kind = self._save_current_map()
             map_path, network_path = launch_vosviewer_desktop(executable, path)
@@ -271,6 +273,44 @@ class VOSPanel(ttk.Frame):
             self.status_var.set(f"已将 {nodes} 个节点交给 VOSviewer 桌面版；可在其中切换原生叠加与密度视图。")
             self.app._log(f"VOS 桌面版 {NETWORK_TYPES[kind]}：{map_path}；{network_path}")
         except (ValueError, OSError, RuntimeError, StopIteration) as exc:
+            self.status_var.set(str(exc))
+            messagebox.showerror("VOS 桌面版", str(exc), parent=self.app.root)
+
+    def _desktop_program(self) -> str:
+        executable = preferences(self.app.app_dir).get("desktop_exe", "") or self.desktop_exe
+        if not Path(executable).is_file():
+            executable = filedialog.askopenfilename(
+                parent=self.app.root, title="选择 VOSviewer 桌面版程序",
+                filetypes=[("VOSviewer 程序", "VOSviewer.exe"), ("Windows 程序", "*.exe")])
+        return executable
+
+    def open_desktop_bibliography(self):
+        executable = self._desktop_program()
+        if not executable:
+            return
+        try:
+            records = self._records()
+            if not records:
+                raise ValueError("当前题录范围内没有可传给 VOSviewer 的记录。")
+            stamp = datetime.now().strftime("%y%m%d%H%M")
+            directory = default_output_dir(self.app.app_dir)
+            path = directory / f"download_{stamp}_VOS.txt"
+            if path.exists():
+                path = directory / f"download_{stamp}_VOS_{datetime.now():%S%f}.txt"
+            bibliography = launch_vosviewer_with_bibliography(
+                executable, path, records, self.app.parsed.header if self.app.parsed else "")
+            self.desktop_exe = executable
+            save_preferences(self.app.app_dir, desktop_exe=executable)
+            self.app.root.clipboard_clear()
+            self.app.root.clipboard_append(str(bibliography))
+            self.status_var.set(f"已传出 {len(records)} 条题录；文件路径已复制，可在 VOSviewer 的 Create 向导选择图谱类型。")
+            self.app._log(f"VOS 自由建图题录 {len(records)} 条：{bibliography}")
+            messagebox.showinfo("在 VOSviewer 中自由建图",
+                                f"已导出 {len(records)} 条题录，并启动 VOSviewer。\n\n"
+                                "在桌面版点击 Create → 基于文献数据创建图谱，选择 Web of Science，"
+                                "再选文件与图谱类型。文件路径已复制到剪贴板：\n"
+                                f"{bibliography}", parent=self.app.root)
+        except (ValueError, OSError, RuntimeError) as exc:
             self.status_var.set(str(exc))
             messagebox.showerror("VOS 桌面版", str(exc), parent=self.app.root)
 

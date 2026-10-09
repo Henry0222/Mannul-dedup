@@ -60,6 +60,7 @@ from .project_workspace import WorkspaceStore, active_records, duplicate_entries
 from .dedupe_review import PRESET_LABELS, apply_review, new_run
 from .dedupe_review import auto_review_run
 from .basic_export import default_export_name, preferred_export_dir, export_basic_records
+from .analysis_scope import DEDUPE_SCOPE, RAW_SCOPE
 from .plot_workbench import PlotWorkbench
 from .vos_panel import VOSPanel
 from .import_preview import ImportPreviewWindow
@@ -75,7 +76,7 @@ from .year_filter import format_year_range, parse_year_range, partition_records_
 
 
 APP_TITLE = "多来源文献相关性筛选工具"
-APP_VERSION = "1.23.0"
+APP_VERSION = "1.24.0"
 SOURCE_LABELS = {"wos": "Web of Science", "scopus": "Scopus", "pubmed": "PubMed",
                  "sciencedirect": "ScienceDirect", "cnki": "CNKI", "wanfang": "万方",
                  "vip": "维普", "yiigle": "中华医学库", "未识别": "未识别"}
@@ -988,6 +989,16 @@ class WosFilterApp:
                 f"关键词自动归并 {len(self.vocabulary_report.get('automatic_keyword_groups', []))} 组；"
                 "上方数字按项目全部年份统计。"
             )
+            try:
+                start, end = self._current_year_scope()
+                ready = self._dedupe_ready_for_scope(start, end)
+            except ValueError:
+                ready = False
+            if not ready:
+                if self.plot_workbench.scope_var.get() == DEDUPE_SCOPE:
+                    self.plot_workbench.scope_var.set(RAW_SCOPE)
+                if self.vos_panel.scope_var.get() == DEDUPE_SCOPE:
+                    self.vos_panel.scope_var.set(RAW_SCOPE)
         for key, count in (("imported", len(self.raw_records)),
                            ("removed", len(self.duplicates)),
                            ("retained", len(self.records))):
@@ -1145,9 +1156,10 @@ class WosFilterApp:
     def _run_scope(run: dict) -> tuple[int | None, int | None]:
         return run.get("year_start"), run.get("year_end")
 
-    def _scoped_records(self) -> tuple[list[WosRecord], int | None, int | None]:
+    def _scoped_records(self, *, include_excluded: bool = False) -> tuple[list[WosRecord], int | None, int | None]:
         start, end = self._current_year_scope()
-        included, _, _ = partition_records_by_year(self.records, start, end)
+        source = self.parsed.records if include_excluded and self.parsed is not None else self.records
+        included, _, _ = partition_records_by_year(source, start, end)
         return included, start, end
 
     def apply_year_scope(self) -> None:
@@ -1268,7 +1280,6 @@ class WosFilterApp:
         self.year_end_var.set(self.project_data.get("year_end", ""))
         self.plot_workbench.load_settings(self.project_data.get("chart_settings", {}))
         self.vos_panel.restore(self.project_data.get("vos_settings", {}))
-        self.metrics_scope_var.set("基础去重结果")
         self.results = {}
         self.review_draft = set()
         self.last_output = None
@@ -1389,6 +1400,8 @@ class WosFilterApp:
             run["applied"] = True
             run["removed_count"] = 0
             self.project_data["needs_dedupe"] = False
+            self.plot_workbench.scope_var.set(DEDUPE_SCOPE)
+            self.vos_panel.scope_var.set(DEDUPE_SCOPE)
         self.project_data["runs"].append(run)
         self.workspace_store.save(self.project_data)
         self._refresh_dedupe_summary()
@@ -1439,6 +1452,8 @@ class WosFilterApp:
             runs.append(run)
         run["automatic"] = True
         self.project_data["needs_dedupe"] = False
+        self.plot_workbench.scope_var.set(DEDUPE_SCOPE)
+        self.vos_panel.scope_var.set(DEDUPE_SCOPE)
         self.results = {}
         self.workspace_store.save(self.project_data)
         self._refresh_import_state()
@@ -1485,6 +1500,8 @@ class WosFilterApp:
             if not messagebox.askyesno("统一去重", f"已核查全部 {len(run['groups'])} 组。确认从当前项目工作列表中排除 {approved} 条重复题录？原始题录仍会保留。", parent=self.root):
                 return
             removed = apply_review(self.project_data, run)
+            self.plot_workbench.scope_var.set(DEDUPE_SCOPE)
+            self.vos_panel.scope_var.set(DEDUPE_SCOPE)
             try:
                 self.project_data["needs_dedupe"] = (
                     self._run_scope(run) != self._current_year_scope()

@@ -92,6 +92,24 @@ class PlotEngineTests(unittest.TestCase):
         self.assertIn("中文：", equation)
         self.assertIn("R²=1.000", equation)
 
+    def test_long_bilingual_grouped_chart_labels_both_regressions_and_editable_legend(self) -> None:
+        rows = []
+        for year in range(1975, 2026):
+            offset = year - 1975
+            for source, count in (("英文", max(0, offset - 2)), ("中文", max(0, (offset - 8) * 2))):
+                rows.append({"year": year, "source": source, "papers": count, "citations": 0})
+        figure = Figure(figsize=(10, 5))
+        options = PlotOptions(chart_type="bar", trend_group="language", show_labels=True,
+                              show_regression=True, regression_method="quadratic",
+                              legend_labels={"英文发文量": "English", "中文发文量": "中文资料"})
+        render_figure(figure, rows, options)
+        ax = figure.axes[0]
+        self.assertEqual(len([line for line in ax.lines if "回归曲线" in line.get_label()]), 2)
+        self.assertEqual(len([item for item in ax.texts if "R²=" in item.get_text()]), 2)
+        self.assertGreater(len([item for item in ax.texts if item.get_text().isdecimal()]), 30)
+        self.assertTrue({"English", "中文资料"}.issubset(
+            {item.get_text() for item in ax.get_legend().get_texts()}))
+
     def test_missing_calendar_years_are_zero_and_evenly_spaced(self) -> None:
         records = sample_records()
         records[0].fields["PY"] = ["1992"]

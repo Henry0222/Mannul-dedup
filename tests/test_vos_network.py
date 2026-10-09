@@ -12,7 +12,7 @@ from wos_filter.vos_network import (build_vos_network, filter_vos_network,
                                     inherit_vos_parameters, node_citation_coverage,
                                     save_vos_network)
 from wos_filter.vos_export import export_vos_map_network
-from wos_filter.vos_desktop import launch_vosviewer_desktop
+from wos_filter.vos_desktop import launch_vosviewer_desktop, launch_vosviewer_with_bibliography
 from wos_filter.vos_viewer import _DataBridge
 from wos_filter.wos import _parse_record_block
 from wos_filter.institution_fields import institution_terms
@@ -176,6 +176,18 @@ class VOSNetworkTests(unittest.TestCase):
             launch.assert_called_once_with(
                 [str(program), "-map", str(map_path), "-network", str(network_path)],
                 cwd=str(source.parent))
+
+    def test_desktop_free_create_gets_wos_bibliography_without_fixed_map(self) -> None:
+        from wos_filter.wos import parse_wos_file
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / "VOSviewer.exe"
+            program.touch()
+            destination = Path(folder) / "download_2610091200_VOS.txt"
+            with patch("wos_filter.vos_desktop.subprocess.Popen") as launch:
+                path = launch_vosviewer_with_bibliography(program, destination, self.records, "")
+            self.assertEqual(path, destination)
+            self.assertEqual(len(parse_wos_file(path).records), len(self.records))
+            launch.assert_called_once_with([str(program)], cwd=str(destination.parent))
 
     def test_bridge_autosave_retains_tls_and_adjusted_position(self) -> None:
         data = build_vos_network(self.records, min_occurrences=1)

@@ -15,6 +15,7 @@ from matplotlib.transforms import ScaledTranslation
 
 from .chart_export import PALETTES, validate_color, validate_export_settings
 from .basic_export import preferred_export_dir
+from .analysis_scope import AI_SCOPE, ANALYSIS_SCOPES, DEDUPE_SCOPE, RAW_SCOPE
 from .bibliometrics import has_citation_count
 from .plot_engine import PlotOptions, RANK_TYPES, TREND_TYPES, VIEW_LABELS, prepare_plot_data, render_figure
 from .plot_layout import apply_layout, layout_artists
@@ -47,9 +48,9 @@ class PlotWorkbench(ttk.Frame):
 
     def _variables(self) -> None:
         defaults = PlotOptions()
-        self.scope_var = tk.StringVar(value="基础去重结果")
+        self.scope_var = tk.StringVar(value=DEDUPE_SCOPE)
         self.source_var = tk.StringVar(value="全部数据库")
-        self.status_var = tk.StringVar(value="完成基础去重后可查看图表。")
+        self.status_var = tk.StringVar(value="导入题录后即可查看图表；也可选择去重结果。")
         self.view_var = tk.StringVar(value="trend")
         self.metric_var = tk.StringVar(value="papers")
         self.chart_type_var = tk.StringVar(value="bar")
@@ -88,6 +89,9 @@ class PlotWorkbench(ttk.Frame):
         self.color_vars["pie_end"] = tk.StringVar(value="#A8DCD4")
         self.text_offsets: dict[str, list[float]] = {}
         self.legend_positions: dict[str, list[float]] = {}
+        self.legend_names: dict[str, str] = {}
+        self.legend_name_vars: dict[str, tk.StringVar] = {}
+        self._legend_editor_keys: tuple[str, ...] = ()
         self._drag: dict | None = None
         self._text_originals: dict[str, object] = {}
 
@@ -96,7 +100,7 @@ class PlotWorkbench(ttk.Frame):
         filter_row.pack(fill="x", pady=(0, 5))
         ttk.Label(filter_row, text="分析题录").pack(side="left")
         scope = ttk.Combobox(filter_row, textvariable=self.scope_var,
-            values=("基础去重结果", "AI 筛选相关"), state="readonly", width=16)
+            values=ANALYSIS_SCOPES, state="readonly", width=23)
         scope.pack(side="left", padx=(5, 15))
         scope.bind("<<ComboboxSelected>>", self.refresh)
         ttk.Label(filter_row, text="数据库").pack(side="left")
@@ -158,6 +162,9 @@ class PlotWorkbench(ttk.Frame):
         self._check(labels, "显示图例", self.show_legend_var)
         self._combo(labels, "图例位置", self.legend_position_var,
                     {"top": "上方", "bottom": "下方", "left": "左侧", "right": "右侧"})
+        ttk.Label(labels, text="图例名称（生成图表后可逐项修改）").pack(anchor="w", pady=(5, 0))
+        self.legend_editor = ttk.Frame(labels)
+        self.legend_editor.pack(fill="x")
         self._check(labels, "显示背景网格线", self.show_grid_var)
         self._check(labels, "显示坐标轴标题", self.show_axis_var)
         self._entry(labels, "X 轴标题", self.x_axis_var)
@@ -413,6 +420,7 @@ class PlotWorkbench(ttk.Frame):
             show_equation=self.equation_var.get(), show_title=self.show_title_var.get(),
             title=self.title_var.get().strip(), subtitle=self.subtitle_var.get().strip(),
             show_legend=self.show_legend_var.get(), legend_position=self.legend_position_var.get(),
+            legend_labels=self.legend_names.copy(),
             show_grid=self.show_grid_var.get(), show_axis_titles=self.show_axis_var.get(),
             x_axis_title=self.x_axis_var.get().strip(), y_axis_title=self.y_axis_var.get().strip(),
             y2_axis_title=self.y2_axis_var.get().strip(), show_labels=self.show_labels_var.get(),
@@ -431,24 +439,26 @@ class PlotWorkbench(ttk.Frame):
         if self._refresh_timer is not None:
             self.after_cancel(self._refresh_timer)
             self._refresh_timer = None
-        sources = sorted({record.source_kind for record in self.app.records})
+        preview_records = self.app.parsed.records if self.scope_var.get() == RAW_SCOPE and self.app.parsed else self.app.records
+        sources = sorted({record.source_kind for record in preview_records})
         choices = ("全部数据库", *sources)
         self.source_combo.configure(values=choices)
         if self.source_var.get() not in choices:
             self.source_var.set("全部数据库")
         try:
             self._update_choices()
-            records, start, end = self.app._scoped_records()
+            raw_scope = self.scope_var.get() == RAW_SCOPE
+            records, start, end = self.app._scoped_records(include_excluded=raw_scope)
             options = self._plot_options()
             options.year_start = start
             options.year_end = end
         except ValueError as exc:
             self._empty(str(exc))
             return
-        if not self.app._dedupe_ready_for_scope(start, end):
+        if not raw_scope and not self.app._dedupe_ready_for_scope(start, end):
             self._empty("请先按当前年份范围完成基础去重。")
             return
-        if self.scope_var.get() == "AI 筛选相关":
+        if self.scope_var.get() == AI_SCOPE:
             if not self.app.results or set(self.app.results) != {record.record_id for record in self.app.records}:
                 self._empty("当前项目尚无完整 AI 筛选结果；请选择基础去重结果。")
                 return
@@ -535,10 +545,41 @@ class PlotWorkbench(ttk.Frame):
     def _render(self, options: PlotOptions | None = None) -> None:
         try:
             render_figure(self.figure, self._selected_rows(), options or self._plot_options())
+            self._sync_legend_editor()
             self._text_originals = apply_layout(self.figure, self.text_offsets, self.legend_positions)
             self.chart.draw_idle()
         except (ValueError, KeyError) as exc:
             self.status_var.set(str(exc))
+
+    def _sync_legend_editor(self) -> None:
+        keys = []
+        if any(axis.get_legend() is not None for axis in self.figure.axes):
+            for axis in self.figure.axes:
+                _handles, labels = axis.get_legend_handles_labels()
+                keys.extend(label for label in labels if label and not label.startswith("_") and label not in keys)
+        current = tuple(keys)
+        if current == self._legend_editor_keys:
+            return
+        for child in self.legend_editor.winfo_children():
+            child.destroy()
+        self.legend_name_vars.clear()
+        self._legend_editor_keys = current
+        if not current:
+            ttk.Label(self.legend_editor, text="当前图表没有可编辑的图例项。", style="Hint.TLabel").pack(anchor="w")
+            return
+        for key in current:
+            row = ttk.Frame(self.legend_editor)
+            row.pack(fill="x", pady=2)
+            ttk.Label(row, text=key, width=18).pack(side="left")
+            variable = tk.StringVar(value=self.legend_names.get(key, key))
+            variable.trace_add("write", lambda *_args, name=key, var=variable: self._legend_name_changed(name, var))
+            ttk.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
+            self.legend_name_vars[key] = variable
+            self._bind_control_wheel(row)
+
+    def _legend_name_changed(self, name: str, variable: tk.StringVar) -> None:
+        self.legend_names[name] = variable.get()
+        self.schedule_render()
 
     def _drag_start(self, event) -> None:
         if event.button != 1 or event.x is None or event.y is None:
@@ -656,7 +697,7 @@ class PlotWorkbench(ttk.Frame):
         messagebox.showinfo("导出完成", destination, parent=self.app.root)
 
     def settings(self) -> dict:
-        names = ("view", "metric", "chart_type", "top_n", "pie_top_n", "group", "trend_group", "keyword_source",
+        names = ("scope", "source", "view", "metric", "chart_type", "top_n", "pie_top_n", "group", "trend_group", "keyword_source",
                  "orientation", "high_position", "year_interval", "regression", "regression_method",
                  "equation", "show_title", "title", "subtitle", "show_legend", "legend_position",
                  "show_grid", "show_axis", "x_axis", "y_axis", "y2_axis", "show_labels", "base_size",
@@ -665,6 +706,7 @@ class PlotWorkbench(ttk.Frame):
         result["colors"] = {name: var.get() for name, var in self.color_vars.items()}
         result["text_offsets"] = self.text_offsets
         result["legend_positions"] = self.legend_positions
+        result["legend_names"] = self.legend_names.copy()
         return result
 
     def load_settings(self, data: dict | None) -> None:
@@ -694,5 +736,7 @@ class PlotWorkbench(ttk.Frame):
                     pass
         self.text_offsets = {key: list(value) for key, value in data.get("text_offsets", {}).items()}
         self.legend_positions = {key: list(value) for key, value in data.get("legend_positions", {}).items()}
+        self.legend_names = {str(key): str(value) for key, value in data.get("legend_names", {}).items()}
+        self._legend_editor_keys = ()
         self._building = False
         self._update_choices()

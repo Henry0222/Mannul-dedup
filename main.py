@@ -134,6 +134,16 @@ if __name__ == "__main__":
                  "success": 1, "failed": 0, "failed_files": 0},
             ]
             app._refresh_import_state()
+            from wos_filter.analysis_scope import RAW_SCOPE
+            if app.plot_workbench.scope_var.get() != RAW_SCOPE or app.vos_panel.scope_var.get() != RAW_SCOPE:
+                raise RuntimeError("未去重项目没有自动切换到全部导入题录")
+            app.plot_workbench.refresh()
+            if sum(row["papers"] for row in app.plot_workbench.rows) != 2:
+                raise RuntimeError("未去重题录未进入发文分析")
+            app.vos_panel.min_var.set("1")
+            app.vos_panel.refresh(quiet=True)
+            if app.vos_panel.data is None:
+                raise RuntimeError("未去重题录未进入 VOS 建图")
             run = new_run(app.records, "quick")
             run["import_generation"] = app.project_data["import_generation"]
             auto_review_run(run, app.records)
@@ -141,6 +151,9 @@ if __name__ == "__main__":
             apply_review(app.project_data, run)
             app.project_data["needs_dedupe"] = False
             app.workspace_store.save(app.project_data)
+            from wos_filter.analysis_scope import DEDUPE_SCOPE
+            app.plot_workbench.scope_var.set(DEDUPE_SCOPE)
+            app.vos_panel.scope_var.set(DEDUPE_SCOPE)
             app._refresh_import_state()
             if {key: var.get() for key, var in app.metric_values.items()} != {
                     "imported": "2", "removed": "1", "retained": "1"}:
@@ -154,6 +167,14 @@ if __name__ == "__main__":
             app.plot_workbench.refresh()
             if sum(row["papers"] for row in app.plot_workbench.rows) != 1:
                 raise RuntimeError("基础去重结果没有正确进入年度趋势")
+            if not app.plot_workbench.legend_name_vars:
+                raise RuntimeError("图例名称编辑框没有生成")
+            edited_legend = next(iter(app.plot_workbench.legend_name_vars))
+            app.plot_workbench.legend_name_vars[edited_legend].set("Publication count")
+            app.plot_workbench._render()
+            if "Publication count" not in [item.get_text() for item in
+                                             app.plot_workbench.figure.axes[0].get_legend().get_texts()]:
+                raise RuntimeError("图例名称修改未应用到预览")
             app.vos_panel.min_var.set("1")
             app.vos_panel.refresh(quiet=True)
             if app.vos_panel.data is None:
@@ -171,9 +192,12 @@ if __name__ == "__main__":
             from wos_filter.wos import parse_wos_file
             if len(parse_wos_file(target / "deduped-records.txt").records) != 1:
                 raise RuntimeError("基础导出未遵循去重结果")
+            app._save_project_view()
             app._load_project(app.project_data["id"])
             if len(app.records) != 1 or len(app.project_data["runs"]) != 1:
                 raise RuntimeError("重新加载后没有恢复去重记录")
+            if app.plot_workbench.legend_names.get(edited_legend) != "Publication count":
+                raise RuntimeError("图例名称没有随项目保存")
             app.plot_workbench.refresh()
             if len(app.plot_workbench.rows) != 1 or app.plot_workbench.rows[0]["papers"] != 1:
                 raise RuntimeError("基础去重后的年度发文量不正确")

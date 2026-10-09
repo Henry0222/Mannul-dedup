@@ -49,6 +49,7 @@ class PlotOptions:
     subtitle: str = ""
     show_legend: bool = True
     legend_position: str = "right"
+    legend_labels: dict[str, str] | None = None
     show_grid: bool = True
     show_axis_titles: bool = True
     x_axis_title: str = ""
@@ -178,6 +179,14 @@ def render_figure(figure, rows: list[dict], options: PlotOptions) -> None:
     if options.subtitle:
         figure.text(.5, .91 if options.show_title else .965, options.subtitle,
                     ha="center", va="top", fontsize=max(8, options.base_size - 2), color="#5B6F7B")
+    if options.legend_labels:
+        for axis in figure.axes:
+            legend = axis.get_legend()
+            if legend is not None:
+                for label in legend.get_texts():
+                    replacement = options.legend_labels.get(label.get_text(), "").strip()
+                    if replacement:
+                        label.set_text(replacement)
     bottom = .13 if options.view == "trend" and options.chart_type == "bilingual_quadratic" else .03
     figure.tight_layout(rect=(.02, bottom, .98, .85 if options.subtitle else .9))
 
@@ -263,19 +272,40 @@ def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, 
                 ax.plot(x, values, linewidth=1.5, color=color)
             else:
                 bars = ax.bar(offsets, values, width=width * .9, label=label, color=color)
-                if options.show_labels and len(years) * len(series) <= 30:
-                    ax.bar_label(bars, fontsize=options.label_size, color=colors["label"])
+                if options.show_labels:
+                    dense = len(years) * len(series) > 30
+                    ax.bar_label(bars, labels=[str(value) if value else "" for value in values],
+                                 fontsize=min(options.label_size, 7) if dense else options.label_size,
+                                 rotation=90 if dense else 0, padding=2,
+                                 color=colors["label"])
             if options.show_labels and options.chart_type in {"line", "point"} and len(years) * len(series) <= 30:
                 for xi, yi in zip(x, values):
                     ax.annotate(str(yi), (xi, yi), xytext=(0, 6), textcoords="offset points",
                                 ha="center", fontsize=options.label_size, color=colors["label"])
         if options.show_regression and len(years) >= 3:
-            for index, metric in enumerate(metrics):
-                totals = np.asarray([sum(row[metric] for row in rows if row["year"] == year)
-                                     for year in years], dtype=float)
-                series_colors = colors if metric == "papers" else {**colors, "regression": colors["citations"]}
-                _regression(ax, x, totals, options, series_colors, np,
-                            "发文量" if metric == "papers" else "引用量", .96 - index * .12)
+            if len(sources) > 1:
+                for index, (source, metric) in enumerate(series):
+                    observed = [(row["year"], row[metric]) for row in rows
+                                if row["source"] == source and row[metric] > 0]
+                    if len(observed) < 3:
+                        continue
+                    fit_x = np.asarray([year for year, _ in observed], dtype=float)
+                    fit_y = np.asarray([value for _, value in observed], dtype=float)
+                    line_color = _series_color(source, index, colors)
+                    label = f"{source}{'发文量' if metric == 'papers' else '引用量'}"
+                    _regression(ax, fit_x, fit_y, options, {**colors, "regression": line_color}, np,
+                                label, .96 - index * .10, text_x=.98, text_ha="right",
+                                plot_years=np.linspace(fit_x.min(), fit_x.max(), 150))
+            else:
+                for index, metric in enumerate(metrics):
+                    totals = np.asarray([sum(row[metric] for row in rows if row["year"] == year)
+                                         for year in years], dtype=float)
+                    series_colors = colors if metric == "papers" else {**colors, "regression": colors["citations"]}
+                    _regression(ax, x, totals, options, series_colors, np,
+                                "发文量" if metric == "papers" else "引用量", .96 - index * .12)
+        if options.show_labels and options.chart_type == "bar":
+            peak = max(row[metric] for row in rows for metric in metrics)
+            ax.set_ylim(top=max(ax.get_ylim()[1], peak * 1.18 + 1))
     ax.set_xticks(x[::max(1, options.year_interval)], [str(y) for y in years[::max(1, options.year_interval)]])
     ax.set_xlim(x[0] - .6, x[-1] + .6)
     _decorate(ax, options, x_default="年份", y_default="发文量" if options.metric != "citations" else "引用量", is_year=True)
@@ -292,11 +322,12 @@ def _render_gradient_combo(ax, rows: list[dict], options: PlotOptions, colors: d
     normalizer = Normalize(vmin=0, vmax=max(1, float(values.max())))
     ax.bar(x, values, width=.7, color=[gradient(normalizer(value)) for value in values], alpha=.8)
     ax.plot(x, values, color="#CD5C5C", linewidth=1.2, marker="o", markersize=4)
-    if options.show_labels and len(years) <= 60:
+    if options.show_labels:
         for year, value in zip(years, values):
             if value:
                 ax.annotate(f"{value:g}", (year, value), xytext=(0, 7), textcoords="offset points",
-                            ha="center", fontsize=options.label_size, color="#323232", weight="bold")
+                            ha="center", fontsize=min(options.label_size, 7) if len(years) > 60 else options.label_size,
+                            rotation=90 if len(years) > 60 else 0, color="#323232", weight="bold")
     ax.set_ylim(0, max(1, float(values.max()) * 1.35))
     ax.set_xticks(x[::options.year_interval])
     ax.set_xlim(x[0] - .6, x[-1] + .6)
@@ -325,12 +356,14 @@ def _render_bilingual_quadratic(ax, rows: list[dict], options: PlotOptions,
         offset = (index - (len(sources) - 1) / 2) * width
         bars = ax.bar(x + offset, values, width=width * .9, color=palette[source],
                       alpha=.6, label=source)
-        if options.show_labels and len(years) * len(sources) <= 60:
+        if options.show_labels:
             for bar, value in zip(bars, values):
                 if value:
                     ax.annotate(f"{value:g}", (bar.get_x() + bar.get_width() / 2, value),
                                 xytext=(0, 5), textcoords="offset points", ha="center",
-                                fontsize=options.label_size, color="#323232")
+                                fontsize=min(options.label_size, 7) if len(years) * len(sources) > 30 else options.label_size,
+                                rotation=90 if len(years) * len(sources) > 30 else 0,
+                                color="#323232")
         observed = np.asarray([year for year in years if by_year.get(year, 0) > 0], dtype=float)
         if len(observed) < 3:
             equations.append(f"{source}：不足 3 个有发文的年份，未拟合")
@@ -362,7 +395,8 @@ def _render_bilingual_quadratic(ax, rows: list[dict], options: PlotOptions,
 
 
 def _regression(ax, years, values, options: PlotOptions, colors: dict[str, str], np,
-                series_name: str, text_y: float) -> None:
+                series_name: str, text_y: float, *, text_x: float = .02,
+                text_ha: str = "left", plot_years=None) -> None:
     x0 = years - years.min()
     if options.regression_method == "loess":
         smoothed = []
@@ -381,15 +415,20 @@ def _regression(ax, years, values, options: PlotOptions, colors: dict[str, str],
     degree = 2 if options.regression_method == "quadratic" else 1
     coefficients = np.polyfit(x0, values, degree)
     fitted = np.polyval(coefficients, x0)
-    ax.plot(years, fitted, color=colors["regression"], linestyle="--", linewidth=2,
+    curve_years = years if plot_years is None else plot_years
+    curve_values = np.polyval(coefficients, curve_years - years.min())
+    ax.plot(curve_years, curve_values, color=colors["regression"], linestyle="--", linewidth=2,
             label=f"{series_name}回归曲线")
     if options.show_equation:
         if degree == 1:
             equation = f"y = {coefficients[0]:.3g}x {coefficients[1]:+.3g}"
         else:
             equation = f"y = {coefficients[0]:.3g}x² {coefficients[1]:+.3g}x {coefficients[2]:+.3g}"
-        ax.text(.02, text_y, f"{series_name}: {equation}（x=年份−{int(years.min())}）",
-                transform=ax.transAxes, va="top", fontsize=max(7, options.label_size),
+        total = float(np.sum((values - values.mean()) ** 2))
+        r2 = 1 - float(np.sum((values - fitted) ** 2)) / total if total else 1.0
+        ax.text(text_x, text_y,
+                f"{series_name}: {equation}（x=年份−{int(years.min())}，R²={r2:.3f}）",
+                transform=ax.transAxes, ha=text_ha, va="top", fontsize=max(7, options.label_size),
                 color=colors["regression"], bbox={"facecolor": "white", "alpha": .8, "edgecolor": "none"})
 
 
