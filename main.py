@@ -74,6 +74,13 @@ if __name__ == "__main__":
                 raise RuntimeError("VOS 新增图谱类型未初始化")
             if not hasattr(app, "plot_workbench") or not hasattr(app.plot_workbench, "chart"):
                 raise RuntimeError("统一图表工作台未初始化")
+            if app.plot_workbench.trend_group_var.get() != "language":
+                raise RuntimeError("年度趋势没有默认按题名语言分组")
+            if not {"gradient_combo", "bilingual_quadratic"}.issubset(
+                    app.plot_workbench._type_choices()):
+                raise RuntimeError("两种新增年度图样式未显示")
+            if hasattr(app, "skip_dedupe_var"):
+                raise RuntimeError("已移除的跳过去重开关仍显示")
             if len(app.plot_workbench.content_tabs.tabs()) != 2 or hasattr(app.plot_workbench, "alias_text"):
                 raise RuntimeError("图表预览、绘图数据或重复术语规则界面不正确")
             if app.log_text.master.master in (app.tabs.nametowidget(app.tabs.tabs()[1]),
@@ -141,42 +148,32 @@ if __name__ == "__main__":
             source_rows = [app.source_tree.item(item, "values") for item in app.source_tree.get_children()]
             if not any(row[0] == "Scopus" and row[-1] == "去重 1 · 保留 0" for row in source_rows):
                 raise RuntimeError("Scopus 来源去重统计不正确")
-            app.skip_dedupe_var.set(True)
-            app._toggle_skip_dedupe()
-            if (len(app.records) != 2 or app.duplicates or
-                    not app._dedupe_ready_for_scope(None, None) or
-                    str(app.find_dedupe_button.cget("state")) != "disabled"):
-                raise RuntimeError(f"未去重模式异常：records={len(app.records)}, duplicates={len(app.duplicates)}, "
-                                   f"ready={app._dedupe_ready_for_scope(None, None)}, "
-                                   f"button={app.find_dedupe_button.cget('state')}, "
-                                   f"flag={app.project_data.get('skip_dedupe')}")
+            if (len(app.records) != 1 or not app._dedupe_ready_for_scope(None, None) or
+                    str(app.find_dedupe_button.cget("state")) == "disabled"):
+                raise RuntimeError("基础去重结果或按钮状态不正确")
             app.plot_workbench.refresh()
-            if not app.plot_workbench.rows or app.plot_workbench.rows[0]["papers"] != 2:
-                raise RuntimeError("未去重题录没有直接进入发文趋势")
+            if sum(row["papers"] for row in app.plot_workbench.rows) != 1:
+                raise RuntimeError("基础去重结果没有正确进入年度趋势")
             app.vos_panel.min_var.set("1")
             app.vos_panel.refresh(quiet=True)
             if app.vos_panel.data is None:
-                raise RuntimeError("未去重题录没有进入 VOS 节点预览")
+                raise RuntimeError("基础去重结果没有进入 VOS 节点预览")
             from wos_filter import gui as gui_module
             original_file_dialog = gui_module.filedialog.asksaveasfilename
             original_info_dialog = gui_module.messagebox.showinfo
             try:
                 gui_module.messagebox.showinfo = lambda *args, **kwargs: None
-                gui_module.filedialog.asksaveasfilename = lambda *args, **kwargs: str(target / "all-records.txt")
+                gui_module.filedialog.asksaveasfilename = lambda *args, **kwargs: str(target / "deduped-records.txt")
                 app.export_basic()
             finally:
                 gui_module.filedialog.asksaveasfilename = original_file_dialog
                 gui_module.messagebox.showinfo = original_info_dialog
             from wos_filter.wos import parse_wos_file
-            if len(parse_wos_file(target / "all-records.txt").records) != 2:
-                raise RuntimeError("未去重导出没有包含两条跨库题录")
+            if len(parse_wos_file(target / "deduped-records.txt").records) != 1:
+                raise RuntimeError("基础导出未遵循去重结果")
             app._load_project(app.project_data["id"])
-            if not app.skip_dedupe_var.get() or len(app.records) != 2:
-                raise RuntimeError("未去重模式没有随项目保存")
-            app.skip_dedupe_var.set(False)
-            app._toggle_skip_dedupe()
             if len(app.records) != 1 or len(app.project_data["runs"]) != 1:
-                raise RuntimeError("关闭未去重模式后没有恢复去重记录")
+                raise RuntimeError("重新加载后没有恢复去重记录")
             app.plot_workbench.refresh()
             if len(app.plot_workbench.rows) != 1 or app.plot_workbench.rows[0]["papers"] != 1:
                 raise RuntimeError("基础去重后的年度发文量不正确")
@@ -204,7 +201,31 @@ if __name__ == "__main__":
             plain_window = PlainMergeWindow(app)
             if plain_window.paths or str(plain_window.export_button.cget("state")) != "normal":
                 raise RuntimeError("独立格式转换合并窗口未正确初始化")
+            plain_window.geometry("650x360")
+            root.update()
+            if plain_window.export_button.winfo_y() + plain_window.export_button.winfo_height() > plain_window.winfo_height():
+                raise RuntimeError("独立合并窗口缩小时遮挡了导出按钮")
+            if app.drop_enabled and not plain_window.tree.dnd_bind("<<Drop>>"):
+                raise RuntimeError("独立合并窗口的文件区未启用拖放")
+            drop_sample = target / "plain-merge-drop.ris"
+            drop_sample.write_text("TY  - JOUR\nTI  - Dropped record\nPY  - 2024\nER  -\n", encoding="utf-8")
+            from types import SimpleNamespace
+            plain_window._on_drop(SimpleNamespace(data=str(drop_sample)))
+            if plain_window.paths != [str(drop_sample.resolve())]:
+                raise RuntimeError(f"独立合并窗口没有接收拖入的题录文件：{plain_window.paths!r}")
             plain_window.destroy()
+            original_scale = root.tk.call("tk", "scaling")
+            try:
+                root.tk.call("tk", "scaling", 2.0)
+                scaled_window = PlainMergeWindow(app)
+                scaled_window.geometry("650x360")
+                root.update()
+                if (scaled_window.export_button.winfo_y() + scaled_window.export_button.winfo_height()
+                        > scaled_window.winfo_height()):
+                    raise RuntimeError("高缩放下独立合并窗口遮挡了导出按钮")
+                scaled_window.destroy()
+            finally:
+                root.tk.call("tk", "scaling", original_scale)
             from wos_filter.import_preview import ImportPreviewWindow
             preview = ImportPreviewWindow(app)
             if len(preview.tabs.tabs()) != 7:

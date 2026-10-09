@@ -22,9 +22,11 @@ from .year_filter import format_year_range, publication_year
 
 
 COLOR_DEFAULTS = {"WOS": "#2F7295", "CNKI": "#70B9B2", "papers": "#2F7295",
-                  "citations": "#65B7B1", "regression": "#B24C3E", "label": "#24495E"}
+                  "citations": "#65B7B1", "regression": "#B24C3E", "label": "#24495E",
+                  "英文": "#86C058", "中文": "#00BFE0"}
 COLOR_LABELS = {"WOS": "WOS", "CNKI": "CNKI", "papers": "发文量", "citations": "引用量",
-                "regression": "回归曲线", "label": "数据标签", "pie_start": "饼图起始", "pie_end": "饼图结束"}
+                "regression": "回归曲线", "label": "数据标签", "pie_start": "饼图起始", "pie_end": "饼图结束",
+                "英文": "英文", "中文": "中文"}
 
 
 class PlotWorkbench(ttk.Frame):
@@ -54,6 +56,7 @@ class PlotWorkbench(ttk.Frame):
         self.top_n_var = tk.StringVar(value="10")
         self.pie_top_n_var = tk.StringVar(value="5")
         self.group_var = tk.BooleanVar(value=False)
+        self.trend_group_var = tk.StringVar(value="language")
         self.keyword_source_var = tk.StringVar(value="author")
         self.orientation_var = tk.StringVar(value="horizontal")
         self.high_position_var = tk.StringVar(value="top")
@@ -132,7 +135,9 @@ class PlotWorkbench(ttk.Frame):
         self.type_combo.bind("<<ComboboxSelected>>", self._type_changed)
         self._entry(data, "显示前 N 项（3–50）", self.top_n_var)
         self._entry(data, "饼图前 N 项（2–20）", self.pie_top_n_var)
-        self._check(data, "按数据库分组显示", self.group_var)
+        self._combo(data, "年度数据分组", self.trend_group_var,
+                    {"language": "自动区分中文 / 英文", "none": "合并全部题录", "database": "按数据库"})
+        self._check(data, "排名图按数据库分组", self.group_var)
         self._combo(data, "关键词来源", self.keyword_source_var,
                     {"author": "作者关键词", "author_plus": "作者 + Keywords Plus"})
         self._combo(data, "排名图方向", self.orientation_var,
@@ -215,7 +220,7 @@ class PlotWorkbench(ttk.Frame):
         self.table.pack(fill="both", expand=True)
         self.table.bind("<Double-1>", self._toggle_row)
 
-        watched = [self.top_n_var, self.pie_top_n_var, self.group_var, self.keyword_source_var,
+        watched = [self.top_n_var, self.pie_top_n_var, self.group_var, self.trend_group_var, self.keyword_source_var,
                    self.orientation_var, self.high_position_var, self.year_interval_var,
                    self.regression_var, self.regression_method_var, self.equation_var,
                    self.show_title_var, self.title_var, self.subtitle_var, self.show_legend_var,
@@ -323,6 +328,11 @@ class PlotWorkbench(ttk.Frame):
     def _update_choices(self) -> None:
         metric_choices = self._metric_choices()
         self.metric_combo.configure(values=tuple(metric_choices.values()))
+        if self.view_var.get() == "trend" and self.chart_type_var.get() in {"gradient_combo", "bilingual_quadratic"}:
+            self.metric_var.set("papers")
+            self.metric_combo.configure(state="disabled")
+        else:
+            self.metric_combo.configure(state="readonly")
         if self.metric_var.get() not in metric_choices:
             self.metric_var.set(next(iter(metric_choices)))
         self.metric_combo.set(metric_choices[self.metric_var.get()])
@@ -394,7 +404,8 @@ class PlotWorkbench(ttk.Frame):
             view=self.view_var.get(), chart_type=self.chart_type_var.get(), metric=self.metric_var.get(),
             top_n=integer(self.top_n_var, 3, 50, "前 N 项"),
             pie_top_n=integer(self.pie_top_n_var, 2, 20, "饼图前 N 项"),
-            include_database=self.group_var.get(), keyword_source=self.keyword_source_var.get(),
+            include_database=self.group_var.get(), trend_group=self.trend_group_var.get(),
+            keyword_source=self.keyword_source_var.get(),
             orientation=self.orientation_var.get(),
             high_position=self.high_position_var.get(),
             year_interval=integer(self.year_interval_var, 1, 20, "年份间隔"),
@@ -435,7 +446,7 @@ class PlotWorkbench(ttk.Frame):
             self._empty(str(exc))
             return
         if not self.app._dedupe_ready_for_scope(start, end):
-            self._empty("请先按当前年份范围完成基础去重，或在文献工作区启用跳过去重。")
+            self._empty("请先按当前年份范围完成基础去重。")
             return
         if self.scope_var.get() == "AI 筛选相关":
             if not self.app.results or set(self.app.results) != {record.record_id for record in self.app.records}:
@@ -459,7 +470,7 @@ class PlotWorkbench(ttk.Frame):
             if options.metric == "citations":
                 records = [record for record in records if has_citation_count(record)]
         self.status_var.set(
-            f"{'未去重题录' if self.app.project_data.get('skip_dedupe') and self.scope_var.get() == '基础去重结果' else self.scope_var.get()} · {self.source_var.get()} · {format_year_range(start, end)}："
+            f"{self.scope_var.get()} · {self.source_var.get()} · {format_year_range(start, end)}："
             f"{len(records)} 条题录，{sum(publication_year(r) is None for r in records)} 条年份未知{citation_note}。"
         )
         try:
@@ -487,7 +498,7 @@ class PlotWorkbench(ttk.Frame):
         fields = ("show", "year", "source", "papers", "citations") if is_trend else (
             ("show", "name", "year", "source", "papers", "citations") if yearly else
             ("show", "name", "source", "papers", "citations"))
-        labels = {"show": "绘制", "name": "名称", "year": "年份", "source": "数据库",
+        labels = {"show": "绘制", "name": "名称", "year": "年份", "source": "数据库 / 语言",
                   "papers": "发文/频次", "citations": "引用量"}
         self.table.configure(columns=fields)
         for field in fields:
@@ -645,7 +656,7 @@ class PlotWorkbench(ttk.Frame):
         messagebox.showinfo("导出完成", destination, parent=self.app.root)
 
     def settings(self) -> dict:
-        names = ("view", "metric", "chart_type", "top_n", "pie_top_n", "group", "keyword_source",
+        names = ("view", "metric", "chart_type", "top_n", "pie_top_n", "group", "trend_group", "keyword_source",
                  "orientation", "high_position", "year_interval", "regression", "regression_method",
                  "equation", "show_title", "title", "subtitle", "show_legend", "legend_position",
                  "show_grid", "show_axis", "x_axis", "y_axis", "y2_axis", "show_labels", "base_size",

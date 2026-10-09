@@ -146,7 +146,7 @@ class VOSPanel(ttk.Frame):
     def _records(self):
         records, start, end = self.app._scoped_records()
         if not self.app._dedupe_ready_for_scope(start, end):
-            raise ValueError("请先完成基础去重，或在文献工作区启用跳过去重。")
+            raise ValueError("请先完成基础去重。")
         if self.scope_var.get() == "AI 筛选相关":
             if not self.app.results or set(self.app.results) != {r.record_id for r in self.app.records}:
                 raise ValueError("当前项目尚无完整 AI 筛选结果。")
@@ -159,7 +159,6 @@ class VOSPanel(ttk.Frame):
             kind = next(key for key, label in NETWORK_TYPES.items() if label == self.kind_var.get())
             source = "author_plus" if self.keyword_var.get() == "作者 + Keywords Plus" else "author"
             key = (self.app.project_data["id"], self.app.project_data.get("import_generation"),
-                   self.app.project_data.get("skip_dedupe", False),
                    len(records), kind, source, self.min_var.get(), self.max_var.get(),
                    self.scope_var.get(), self.app.year_start_var.get(), self.app.year_end_var.get())
             if key == self._preview_key:

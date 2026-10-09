@@ -65,7 +65,7 @@ def duplicate_entries(project: dict, records: list[WosRecord]) -> list[Duplicate
 
 
 class WorkspaceStore:
-    VIEW_FIELDS = ("query", "year_start", "year_end", "auto_keyword", "skip_dedupe", "chart_settings",
+    VIEW_FIELDS = ("query", "year_start", "year_end", "auto_keyword", "chart_settings",
                    "vos_settings", "last_vos_path", "chart_export_dir")
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
@@ -115,7 +115,7 @@ class WorkspaceStore:
             "id": str(uuid.uuid4()), "name": name,
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "files": [], "file_results": [], "records": [], "warnings": [],
-            "excluded_keys": [], "runs": [], "needs_dedupe": True, "skip_dedupe": False,
+            "excluded_keys": [], "runs": [], "needs_dedupe": True,
             "ai_results_stale": False, "import_generation": 0,
             "query": "", "year_start": "", "year_end": "",
         }
@@ -135,6 +135,7 @@ class WorkspaceStore:
             view = json.loads(view_path.read_text(encoding="utf-8"))
             if isinstance(view, dict):
                 project.update({key: view[key] for key in self.VIEW_FIELDS if key in view})
+        project.pop("skip_dedupe", None)
         return project
 
     def save_view(self, project: dict) -> None:

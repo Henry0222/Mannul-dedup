@@ -177,6 +177,16 @@ class WorkspaceDedupeTests(unittest.TestCase):
             self.assertFalse(path.with_name("view.json").exists())
             self.assertEqual(store.load(project["id"])["vos_settings"]["min"], "4")
 
+    def test_legacy_skip_dedupe_setting_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = WorkspaceStore(Path(directory))
+            project = store.load(store.last_project_id())
+            project["skip_dedupe"] = True
+            store.save(project)
+            self.assertNotIn("skip_dedupe", store.load(project["id"]))
+            store.save_view(project)
+            self.assertNotIn("skip_dedupe", store.load(project["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

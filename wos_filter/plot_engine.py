@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -19,7 +20,8 @@ VIEW_LABELS = {
     "keywords": "关键词排名",
 }
 TREND_TYPES = {"bar": "柱状图", "line": "折线图", "point": "散点图", "area": "面积图",
-               "dual_axis": "双 Y 轴柱线图"}
+               "dual_axis": "双 Y 轴柱线图", "gradient_combo": "渐变柱线图（R 风格）",
+               "bilingual_quadratic": "中英文对照图（二次回归）"}
 RANK_TYPES = {"bar": "总体条形图", "lollipop": "总体棒棒糖图", "overall_line": "总体折线图",
               "yearly_bar": "逐年柱状图", "yearly_line": "逐年折线图", "pie": "总体饼图", "radar": "总体雷达图"}
 
@@ -32,6 +34,7 @@ class PlotOptions:
     top_n: int = 10
     pie_top_n: int = 5
     include_database: bool = False
+    trend_group: str = "none"
     keyword_source: str = "author"
     year_start: int | None = None
     year_end: int | None = None
@@ -61,6 +64,14 @@ class PlotOptions:
     pie_end: str = "#A8DCD4"
 
 
+_HAN = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+
+
+def record_language(record: WosRecord) -> str:
+    """Classify the displayed title, independently of its file or database."""
+    return "中文" if _HAN.search(record.title) else "英文"
+
+
 def prepare_plot_data(records: list[WosRecord], options: PlotOptions) -> list[dict]:
     """Return exactly the rows shown in the plot data table and CSV export."""
     if options.view not in VIEW_LABELS:
@@ -68,12 +79,19 @@ def prepare_plot_data(records: list[WosRecord], options: PlotOptions) -> list[di
     if options.view == "trend":
         buckets: dict[tuple[int, str], dict[str, int]] = defaultdict(lambda: {"papers": 0, "citations": 0})
         sources = {record.source_kind for record in records}
-        grouped = options.include_database and len(sources) > 1
+        group_mode = ("language" if options.chart_type == "bilingual_quadratic" else
+                      "none" if options.chart_type == "gradient_combo" else options.trend_group)
+        if group_mode not in {"none", "database", "language"}:
+            raise ValueError("未知年度分组方式。")
+        if group_mode == "none" and options.include_database:
+            group_mode = "database"
+        grouped_database = group_mode == "database" and len(sources) > 1
         for record in records:
             year = publication_year(record)
             if year is None:
                 continue
-            source = record.source_kind if grouped else "全部"
+            source = (record_language(record) if group_mode == "language" else
+                      record.source_kind if grouped_database else "全部")
             buckets[(year, source)]["papers"] += 1
             buckets[(year, source)]["citations"] += citation_count(record)
         if not buckets:
@@ -160,7 +178,8 @@ def render_figure(figure, rows: list[dict], options: PlotOptions) -> None:
     if options.subtitle:
         figure.text(.5, .91 if options.show_title else .965, options.subtitle,
                     ha="center", va="top", fontsize=max(8, options.base_size - 2), color="#5B6F7B")
-    figure.tight_layout(rect=(.02, .03, .98, .85 if options.subtitle else .9))
+    bottom = .13 if options.view == "trend" and options.chart_type == "bilingual_quadratic" else .03
+    figure.tight_layout(rect=(.02, bottom, .98, .85 if options.subtitle else .9))
 
 
 def _series_color(name: str, index: int, colors: dict[str, str]) -> str:
@@ -192,6 +211,12 @@ def _decorate(ax, options: PlotOptions, *, x_default: str, y_default: str, is_ye
 
 
 def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, str], np) -> None:
+    if options.chart_type == "gradient_combo":
+        _render_gradient_combo(ax, rows, options, colors, np)
+        return
+    if options.chart_type == "bilingual_quadratic":
+        _render_bilingual_quadratic(ax, rows, options, colors, np)
+        return
     years = sorted({row["year"] for row in rows})
     sources = sorted({row["source"] for row in rows})
     metrics = ["papers", "citations"] if options.metric == "both" else [options.metric]
@@ -254,6 +279,86 @@ def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, 
     ax.set_xticks(x[::max(1, options.year_interval)], [str(y) for y in years[::max(1, options.year_interval)]])
     ax.set_xlim(x[0] - .6, x[-1] + .6)
     _decorate(ax, options, x_default="年份", y_default="发文量" if options.metric != "citations" else "引用量", is_year=True)
+
+
+def _render_gradient_combo(ax, rows: list[dict], options: PlotOptions, colors: dict[str, str], np) -> None:
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    years = sorted({row["year"] for row in rows})
+    values = np.asarray([sum(row["papers"] for row in rows if row["year"] == year)
+                         for year in years], dtype=float)
+    x = np.asarray(years, dtype=float)
+    gradient = LinearSegmentedColormap.from_list("annual_publications", ["#ADD8E6", "#00008B"])
+    normalizer = Normalize(vmin=0, vmax=max(1, float(values.max())))
+    ax.bar(x, values, width=.7, color=[gradient(normalizer(value)) for value in values], alpha=.8)
+    ax.plot(x, values, color="#CD5C5C", linewidth=1.2, marker="o", markersize=4)
+    if options.show_labels and len(years) <= 60:
+        for year, value in zip(years, values):
+            if value:
+                ax.annotate(f"{value:g}", (year, value), xytext=(0, 7), textcoords="offset points",
+                            ha="center", fontsize=options.label_size, color="#323232", weight="bold")
+    ax.set_ylim(0, max(1, float(values.max()) * 1.35))
+    ax.set_xticks(x[::options.year_interval])
+    ax.set_xlim(x[0] - .6, x[-1] + .6)
+    _decorate(ax, options, x_default="年份", y_default="发文量（篇）", is_year=True)
+    ax.grid(False, axis="x")
+    ax.spines["top"].set_visible(True)
+    ax.spines["right"].set_visible(True)
+    ax.spines["top"].set_color("#D9E3E8")
+    ax.spines["right"].set_color("#D9E3E8")
+
+
+def _render_bilingual_quadratic(ax, rows: list[dict], options: PlotOptions,
+                                colors: dict[str, str], np) -> None:
+    years = sorted({row["year"] for row in rows})
+    sources = [name for name in ("英文", "中文") if any(row["source"] == name for row in rows)]
+    if not sources:
+        raise ValueError("当前年份范围内没有可识别语言的题录。")
+    x = np.asarray(years, dtype=float)
+    width = .7 / len(sources)
+    palette = {"英文": colors.get("英文", "#86C058"), "中文": colors.get("中文", "#00BFE0")}
+    peak = max(1, max(row["papers"] for row in rows))
+    equations = []
+    for index, source in enumerate(sources):
+        by_year = {row["year"]: row["papers"] for row in rows if row["source"] == source}
+        values = np.asarray([by_year.get(year, 0) for year in years], dtype=float)
+        offset = (index - (len(sources) - 1) / 2) * width
+        bars = ax.bar(x + offset, values, width=width * .9, color=palette[source],
+                      alpha=.6, label=source)
+        if options.show_labels and len(years) * len(sources) <= 60:
+            for bar, value in zip(bars, values):
+                if value:
+                    ax.annotate(f"{value:g}", (bar.get_x() + bar.get_width() / 2, value),
+                                xytext=(0, 5), textcoords="offset points", ha="center",
+                                fontsize=options.label_size, color="#323232")
+        observed = np.asarray([year for year in years if by_year.get(year, 0) > 0], dtype=float)
+        if len(observed) < 3:
+            equations.append(f"{source}：不足 3 个有发文的年份，未拟合")
+            continue
+        observed_values = np.asarray([by_year[int(year)] for year in observed], dtype=float)
+        origin = int(observed.min())
+        coefficients = np.polyfit(observed - origin, observed_values, 2)
+        fitted = np.polyval(coefficients, observed - origin)
+        ss_total = float(np.sum((observed_values - observed_values.mean()) ** 2))
+        r2 = 1 - float(np.sum((observed_values - fitted) ** 2)) / ss_total if ss_total else 1.0
+        curve_x = np.linspace(x.min(), x.max(), max(100, len(years) * 4))
+        ax.plot(curve_x, np.polyval(coefficients, curve_x - origin), color=palette[source],
+                linewidth=2, label="_nolegend_")
+        equations.append(f"{source}：y={coefficients[0]:.3g}t² {coefficients[1]:+.3g}t "
+                         f"{coefficients[2]:+.3g}（t=年份−{origin}，R²={r2:.3f}）")
+    ax.set_ylim(0, peak * (1.55 if options.show_equation else 1.2))
+    if options.show_equation:
+        ax.text(.01, .98, "\n".join(equations), transform=ax.transAxes, ha="left", va="top",
+                fontsize=max(7, options.label_size), color="#323232", weight="bold",
+                bbox={"facecolor": "white", "alpha": .85, "edgecolor": "none"})
+    ax.set_xticks(x[::options.year_interval])
+    ax.set_xlim(x[0] - .6, x[-1] + .6)
+    _decorate(ax, options, x_default="年", y_default="发文量（篇）", is_year=True)
+    if options.show_legend:
+        ax.get_legend().remove()
+        ax.legend(loc="upper center", bbox_to_anchor=(.5, -.28), ncol=2,
+                  frameon=False, fontsize=max(7, options.base_size - 2))
+    ax.grid(False, which="minor")
 
 
 def _regression(ax, years, values, options: PlotOptions, colors: dict[str, str], np,

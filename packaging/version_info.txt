@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 22, 0, 0),
-    prodvers=(1, 22, 0, 0),
+    filevers=(1, 23, 0, 0),
+    prodvers=(1, 23, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'WOS Literature Tools'),
           StringStruct(u'FileDescription', u'多来源文献相关性筛选工具'),
-          StringStruct(u'FileVersion', u'1.22.0'),
+          StringStruct(u'FileVersion', u'1.23.0'),
           StringStruct(u'InternalName', u'WOSLiteratureFilter'),
           StringStruct(u'LegalCopyright', u'For research workflow use'),
           StringStruct(u'OriginalFilename', u'WOS文献筛选工具.exe'),
           StringStruct(u'ProductName', u'多来源文献相关性筛选工具'),
-          StringStruct(u'ProductVersion', u'1.22.0')
+          StringStruct(u'ProductVersion', u'1.23.0')
         ]
       )
     ]),

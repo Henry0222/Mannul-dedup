@@ -75,7 +75,7 @@ from .year_filter import format_year_range, parse_year_range, partition_records_
 
 
 APP_TITLE = "多来源文献相关性筛选工具"
-APP_VERSION = "1.22.0"
+APP_VERSION = "1.23.0"
 SOURCE_LABELS = {"wos": "Web of Science", "scopus": "Scopus", "pubmed": "PubMed",
                  "sciencedirect": "ScienceDirect", "cnki": "CNKI", "wanfang": "万方",
                  "vip": "维普", "yiigle": "中华医学库", "未识别": "未识别"}
@@ -475,11 +475,6 @@ class WosFilterApp:
         ttk.Button(year_limit, text="应用年份", command=self.apply_year_scope).pack(side=LEFT)
         ttk.Label(year_limit, textvariable=self.year_scope_var, style="Hint.TLabel").pack(side=LEFT, padx=12)
 
-        self.skip_dedupe_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            workspace, text="跳过去重：保留全部导入题录，直接绘图或导出",
-            variable=self.skip_dedupe_var, command=self._toggle_skip_dedupe,
-        ).pack(anchor=W, pady=(12, 0))
         dedupe_bar = ttk.Frame(workspace)
         dedupe_bar.pack(fill=X, pady=(12, 6))
         ttk.Label(dedupe_bar, text="去重模式：").pack(side=LEFT)
@@ -720,13 +715,12 @@ class WosFilterApp:
         try:
             start, end = self._current_year_scope()
             if not self._dedupe_ready_for_scope(start, end):
-                raise ValueError("当前题录状态已变化，请完成去重或启用跳过去重后再保存建议。")
+                raise ValueError("当前题录状态已变化，请先完成基础去重后再保存建议。")
         except ValueError as exc:
             messagebox.showerror("保存 DeepSeek 合并失败", str(exc), parent=parent or self.root)
             return False, False
         saved = self._commit_vocabulary_spec(spec, parent=parent, refresh=refresh)
-        return saved, bool(saved and self.project_data.get("needs_dedupe")
-                           and not self.project_data.get("skip_dedupe"))
+        return saved, bool(saved and self.project_data.get("needs_dedupe"))
 
     def _commit_vocabulary_spec(self, spec: dict, *, parent: tk.Widget | None = None,
                                 refresh: bool = True) -> bool:
@@ -988,9 +982,8 @@ class WosFilterApp:
                          for item in self.project_data["file_results"] if not item.get("failed_files")]
             self.parsed = ParsedWos(records=normalized, header="FN Clarivate Web of Science\nVR 1.0",
                                     warnings=list(self.project_data["warnings"]), imports=summaries)
-            skipping = self.project_data.get("skip_dedupe", False)
-            self.records = list(normalized) if skipping else active_records(self.project_data, normalized)
-            self.duplicates = [] if skipping else duplicate_entries(self.project_data, normalized)
+            self.records = active_records(self.project_data, normalized)
+            self.duplicates = duplicate_entries(self.project_data, normalized)
             self.import_summary_var.set(
                 f"关键词自动归并 {len(self.vocabulary_report.get('automatic_keyword_groups', []))} 组；"
                 "上方数字按项目全部年份统计。"
@@ -1049,14 +1042,13 @@ class WosFilterApp:
         deduped: Counter[str] = Counter()
         retained: Counter[str] = Counter()
         if self.parsed is not None:
-            excluded = set() if self.project_data.get("skip_dedupe") else set(self.project_data["excluded_keys"])
+            excluded = set(self.project_data["excluded_keys"])
             for record in self.parsed.records:
                 (deduped if record_key(record) in excluded else retained)[record.source_kind] += 1
         for source, values in sorted(counts.items()):
             self.source_tree.insert("", END, values=(SOURCE_LABELS.get(source, source), values["uploaded"],
                                                      values["success"], values["failed"], values["failed_files"],
-                                                     (f"未去重 · 保留 {retained[source]}" if self.project_data.get("skip_dedupe")
-                                                      else f"去重 {deduped[source]} · 保留 {retained[source]}")))
+                                                     f"去重 {deduped[source]} · 保留 {retained[source]}"))
 
     def _refresh_literature_list(self) -> None:
         try:
@@ -1072,7 +1064,7 @@ class WosFilterApp:
         self.literature_tree.delete(*self.literature_tree.get_children())
         if self.parsed is None:
             return
-        excluded = set() if self.project_data.get("skip_dedupe") else set(self.project_data["excluded_keys"])
+        excluded = set(self.project_data["excluded_keys"])
         visible, _, _ = partition_records_by_year(self.parsed.records, start, end)
         for record in sorted(visible, key=lambda item: (self._title_sort_key(item.title), record_key(item))):
             key = record_key(record)
@@ -1122,15 +1114,9 @@ class WosFilterApp:
         return text.lstrip("\"'([{“‘《〈【—–- ·:：")
 
     def _refresh_dedupe_summary(self) -> None:
-        skipping = self.project_data.get("skip_dedupe", False)
-        self.find_dedupe_button.configure(state="disabled" if skipping else "normal")
-        self.one_click_dedupe_button.configure(state="disabled" if skipping else "normal")
-        self.dedupe_mode_combo.configure(state="disabled" if skipping else "readonly")
-        if skipping:
-            self.dedupe_summary_var.set(
-                f"未去重模式：{len(self.records):,} 条导入题录全部用于绘图、VOS 和当前题录导出；去重历史保留。")
-            self.apply_dedupe_button.configure(state="disabled")
-            return
+        self.find_dedupe_button.configure(state="normal")
+        self.one_click_dedupe_button.configure(state="normal")
+        self.dedupe_mode_combo.configure(state="readonly")
         runs = self.project_data["runs"]
         if not runs:
             self.dedupe_summary_var.set("尚未运行去重。")
@@ -1155,27 +1141,6 @@ class WosFilterApp:
     def _current_year_scope(self) -> tuple[int | None, int | None]:
         return parse_year_range(self.year_start_var.get(), self.year_end_var.get())
 
-    def _toggle_skip_dedupe(self) -> None:
-        previous = bool(self.project_data.get("skip_dedupe", False))
-        if self.running:
-            self.skip_dedupe_var.set(previous)
-            return
-        self.project_data["skip_dedupe"] = self.skip_dedupe_var.get()
-        try:
-            self.workspace_store.save(self.project_data)
-        except OSError as exc:
-            self.project_data["skip_dedupe"] = previous
-            self.skip_dedupe_var.set(previous)
-            messagebox.showerror("保存模式失败", str(exc), parent=self.root)
-            return
-        self.metrics_scope_var.set("基础去重结果")
-        self.vos_panel.scope_var.set("基础去重结果")
-        self._refresh_import_state()
-        self._restore_saved_ai_results()
-        self.vos_panel.refresh(quiet=True)
-        self._log("已切换为未去重模式；所有导入题录可直接绘图或导出。" if self.skip_dedupe_var.get()
-                  else "已恢复去重工作区；原有去重历史未删除。")
-
     @staticmethod
     def _run_scope(run: dict) -> tuple[int | None, int | None]:
         return run.get("year_start"), run.get("year_end")
@@ -1195,7 +1160,7 @@ class WosFilterApp:
             messagebox.showwarning("年份范围", str(exc), parent=self.root)
             return
         runs = self.project_data["runs"]
-        if (not self.project_data.get("skip_dedupe") and runs and not runs[-1]["applied"]
+        if (runs and not runs[-1]["applied"]
                 and self._run_scope(runs[-1]) != (start, end)):
             if not messagebox.askyesno("切换年份范围", "当前去重候选尚未完成。切换年份会放弃本轮核查，是否继续？", parent=self.root):
                 previous_start, previous_end = self._run_scope(runs[-1])
@@ -1218,8 +1183,6 @@ class WosFilterApp:
         self._log(f"年份范围设为 {format_year_range(start, end)}；范围外题录仍保存在项目中。")
 
     def _dedupe_ready_for_scope(self, start: int | None, end: int | None) -> bool:
-        if self.project_data.get("skip_dedupe", False):
-            return bool(self.raw_records)
         runs = self.project_data["runs"]
         return bool(runs and runs[-1]["applied"] and not self.project_data.get("needs_dedupe", True)
                     and self._run_scope(runs[-1]) == (start, end)
@@ -1230,7 +1193,7 @@ class WosFilterApp:
         updates = {
             "query": self.query_text.get("1.0", END).strip(),
             "year_start": self.year_start_var.get(), "year_end": self.year_end_var.get(),
-            "auto_keyword": self.auto_keyword_var.get(), "skip_dedupe": self.skip_dedupe_var.get(),
+            "auto_keyword": self.auto_keyword_var.get(),
             "vocabulary_spec": self.vocabulary_spec,
             "chart_settings": self._chart_settings(), "vos_settings": self.vos_panel.settings(),
         }
@@ -1298,7 +1261,6 @@ class WosFilterApp:
                 self._log(f"共享合并目录读取失败，已保留项目规则：{exc}")
         self.project_data["vocabulary_spec"] = self.vocabulary_spec
         self.auto_keyword_var.set(self.project_data.get("auto_keyword", True))
-        self.skip_dedupe_var.set(self.project_data.get("skip_dedupe", False))
         self.file_notice_var.set("可逐行核对文件名、来源、成功/失败题录与导入状态；双击查看完整路径。")
         self.query_text.delete("1.0", END)
         self.query_text.insert("1.0", self.project_data.get("query", ""))
@@ -1403,7 +1365,7 @@ class WosFilterApp:
             messagebox.showerror("删除项目失败", str(exc), parent=self.root)
 
     def run_dedupe(self) -> None:
-        if self.running or self.project_data.get("skip_dedupe"):
+        if self.running:
             return
         if not self.records:
             messagebox.showwarning("没有题录", "请先拖入可识别的完整题录文件。", parent=self.root)
@@ -1436,7 +1398,7 @@ class WosFilterApp:
             self.open_dedupe_review()
 
     def one_click_dedupe(self) -> None:
-        if self.running or not self.records or self.project_data.get("skip_dedupe"):
+        if self.running or not self.records:
             return
         try:
             scoped, start, end = self._scoped_records()
@@ -1513,7 +1475,7 @@ class WosFilterApp:
                       ("一键完成" if run.get("automatic") else "已应用") if run["applied"] else "核查中"))
 
     def apply_dedupe(self) -> None:
-        if self.running or self.project_data.get("skip_dedupe") or not self.project_data["runs"]:
+        if self.running or not self.project_data["runs"]:
             return
         run = self.project_data["runs"][-1]
         try:
@@ -1547,7 +1509,7 @@ class WosFilterApp:
             messagebox.showwarning("年份范围", str(exc), parent=self.root)
             return
         if not self._dedupe_ready_for_scope(start, end):
-            messagebox.showwarning("题录尚未就绪", "请先完成去重，或启用“跳过去重”直接导出。", parent=self.root)
+            messagebox.showwarning("题录尚未就绪", "请先完成基础去重；如只需转换格式并合并，请使用独立合并功能。", parent=self.root)
             return
         if not scoped or self.parsed is None:
             messagebox.showwarning("没有可导出的题录", "当前年份范围内没有保留的题录。", parent=self.root)
@@ -1576,7 +1538,7 @@ class WosFilterApp:
         self.project_data["basic_export_dir"] = str(destination.parent)
         self.project_data["last_basic_export"] = str(destination)
         self.workspace_store.save(self.project_data)
-        self._log(f"{'未去重' if self.project_data.get('skip_dedupe') else '已去重'}题录已导出 {len(ordered)} 条：{destination}")
+        self._log(f"已去重题录已导出 {len(ordered)} 条：{destination}")
         messagebox.showinfo("导出完成", f"已导出 {len(ordered)} 条题录。\n{destination}", parent=self.root)
 
     def show_literature_detail(self, _event: tk.Event | None = None) -> None:
@@ -1661,7 +1623,7 @@ class WosFilterApp:
             messagebox.showwarning("年份范围", str(exc), parent=self.root)
             return
         if not self._dedupe_ready_for_scope(year_start, year_end):
-            messagebox.showwarning("题录尚未就绪", "请按当前年份范围完成去重，或启用“跳过去重”。", parent=self.root)
+            messagebox.showwarning("题录尚未就绪", "请按当前年份范围完成基础去重。", parent=self.root)
             self.tabs.select(0)
             return
         if self.parsed is None:

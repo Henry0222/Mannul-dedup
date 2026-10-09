@@ -55,6 +55,43 @@ class PlotEngineTests(unittest.TestCase):
         rows = prepare_plot_data(normalized, PlotOptions(view="keywords"))
         self.assertEqual([(row["name"], row["papers"]) for row in rows], [("Water waste", 2)])
 
+    def test_bilingual_titles_are_grouped_across_files_and_styles_render(self) -> None:
+        records = [
+            WosRecord({"TI": ["English paper A"], "PY": ["2021"]}, "", "mixed.txt", 1, source_kind="wos"),
+            WosRecord({"TI": ["中文论文甲"], "PY": ["2021"]}, "", "mixed.txt", 2, source_kind="wos"),
+            WosRecord({"TI": ["English paper B"], "PY": ["2023"]}, "", "other.ris", 1, source_kind="cnki"),
+            WosRecord({"TI": ["中文论文乙"], "PY": ["2024"]}, "", "other.ris", 2, source_kind="cnki"),
+        ]
+        options = PlotOptions(chart_type="bilingual_quadratic", year_start=2021, year_end=2024)
+        rows = prepare_plot_data(records, options)
+        self.assertEqual({row["source"] for row in rows}, {"中文", "英文"})
+        self.assertEqual([row["papers"] for row in rows if row["source"] == "中文"], [1, 0, 0, 1])
+        self.assertEqual([row["papers"] for row in rows if row["source"] == "英文"], [1, 0, 1, 0])
+        figure = Figure(figsize=(7, 4))
+        render_figure(figure, rows, options)
+        self.assertTrue({"中文", "英文"}.issubset(
+            {text.get_text() for text in figure.axes[0].get_legend().get_texts()}))
+        self.assertTrue(any("不足 3 个" in text.get_text() for text in figure.axes[0].texts))
+        gradient = PlotOptions(chart_type="gradient_combo", trend_group="language")
+        gradient_rows = prepare_plot_data(records, gradient)
+        self.assertEqual({row["source"] for row in gradient_rows}, {"全部"})
+        gradient_figure = Figure(figsize=(7, 4))
+        render_figure(gradient_figure, gradient_rows, gradient)
+        self.assertEqual(len(gradient_figure.axes[0].patches), 4)
+        self.assertEqual(len(gradient_figure.axes[0].lines), 1)
+
+    def test_bilingual_quadratic_uses_observed_years_for_each_language(self) -> None:
+        rows = []
+        for year, english, chinese in ((2020, 1, 2), (2021, 4, 3), (2022, 9, 6), (2023, 0, 0)):
+            rows.extend([{"year": year, "source": source, "papers": count, "citations": 0}
+                         for source, count in (("英文", english), ("中文", chinese))])
+        figure = Figure(figsize=(7, 4))
+        render_figure(figure, rows, PlotOptions(chart_type="bilingual_quadratic"))
+        equation = next(text.get_text() for text in figure.axes[0].texts if "R²=" in text.get_text())
+        self.assertIn("英文：", equation)
+        self.assertIn("中文：", equation)
+        self.assertIn("R²=1.000", equation)
+
     def test_missing_calendar_years_are_zero_and_evenly_spaced(self) -> None:
         records = sample_records()
         records[0].fields["PY"] = ["1992"]

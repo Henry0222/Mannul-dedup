@@ -12,6 +12,11 @@ from .basic_export import default_export_name, default_output_dir, export_basic_
 from .file_drop import expand_bibliography_inputs
 from .source_import import import_one
 
+try:
+    from tkinterdnd2 import DND_FILES
+except (ImportError, OSError):
+    DND_FILES = None
+
 
 @dataclass
 class PlainMergeResult:
@@ -55,16 +60,19 @@ class PlainMergeWindow(tk.Toplevel):
         self.paths: list[str] = []
         self._busy = False
         self.title("仅转换格式并合并文件")
-        self.geometry("780x520")
-        self.minsize(650, 400)
+        self.geometry("780x560")
+        self.minsize(650, 360)
         self.transient(app.root)
         outer = ttk.Frame(self, padding=18)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="仅转换格式并合并文件", font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(outer, text="逐个识别文件，按清单顺序写入同一个 WoS 兼容 TXT。保留重复题录与原始词语，不使用项目或历史合并规则。",
-                  wraplength=720).pack(anchor="w", pady=(5, 15))
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(3, weight=1)
+        ttk.Label(outer, text="仅转换格式并合并文件", font=("Microsoft YaHei UI", 16, "bold")).grid(row=0, column=0, sticky="w")
+        description = ttk.Label(outer, text="逐个识别文件，按清单顺序写入同一个 WoS 兼容 TXT。保留重复题录与原始词语，不使用项目或历史合并规则。")
+        description.grid(row=1, column=0, sticky="ew", pady=(5, 12))
+        outer.bind("<Configure>", lambda event: description.configure(wraplength=max(300, event.width - 8)))
         bar = ttk.Frame(outer)
-        bar.pack(fill="x")
+        bar.grid(row=2, column=0, sticky="ew")
         self.add_button = ttk.Button(bar, text="添加文件…", command=self._add_files)
         self.add_button.pack(side="left")
         self.folder_button = ttk.Button(bar, text="添加文件夹…", command=self._add_folder)
@@ -74,19 +82,43 @@ class PlainMergeWindow(tk.Toplevel):
         self.clear_button = ttk.Button(bar, text="清空", command=self._clear)
         self.clear_button.pack(side="left")
         frame = ttk.Frame(outer)
-        frame.pack(fill="both", expand=True, pady=(12, 8))
-        self.tree = ttk.Treeview(frame, columns=("number", "name", "folder"), show="headings", selectmode="extended")
+        frame.grid(row=3, column=0, sticky="nsew", pady=(12, 8))
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        self.tree = ttk.Treeview(frame, columns=("number", "name", "folder"), show="headings",
+                                 selectmode="extended", height=4)
         for key, title, width in (("number", "序号", 55), ("name", "文件名", 300), ("folder", "所在文件夹", 380)):
             self.tree.heading(key, text=title)
             self.tree.column(key, width=width, anchor="w")
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        self.tree.pack(fill="both", expand=True)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.tree.grid(row=0, column=0, sticky="nsew")
         self.status = tk.StringVar(value="尚未添加文件。")
-        ttk.Label(outer, textvariable=self.status, wraplength=720).pack(anchor="w", pady=(0, 9))
+        status = ttk.Label(outer, textvariable=self.status)
+        status.grid(row=4, column=0, sticky="ew", pady=(0, 9))
+        outer.bind("<Configure>", lambda event: status.configure(wraplength=max(300, event.width - 8)), add="+")
         self.export_button = ttk.Button(outer, text="选择位置并导出…", command=self._export)
-        self.export_button.pack(anchor="e")
+        self.export_button.grid(row=5, column=0, sticky="e")
+        if DND_FILES is not None and hasattr(self, "drop_target_register"):
+            for widget in (self, outer, frame, self.tree):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_drop)
+        self.update_idletasks()
+        self.minsize(650, max(360, outer.winfo_reqheight() + 36))
+
+    def _on_drop(self, event) -> str | None:
+        if not self._busy:
+            raw_data = getattr(event, "data", "")
+            if Path(raw_data).exists():
+                paths = [raw_data]
+            else:
+                try:
+                    paths = list(self.tk.splitlist(raw_data))
+                except tk.TclError:
+                    paths = [raw_data] if raw_data else []
+            self._add(paths)
+        return getattr(event, "action", None)
 
     def _add(self, items: list[str]) -> None:
         expanded, warnings = expand_bibliography_inputs(items)
