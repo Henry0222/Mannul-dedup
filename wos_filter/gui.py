@@ -60,6 +60,7 @@ from .project_workspace import WorkspaceStore, active_records, duplicate_entries
 from .dedupe_review import PRESET_LABELS, apply_review, new_run
 from .dedupe_review import auto_review_run
 from .basic_export import default_export_name, preferred_export_dir, export_basic_records
+from .source_labels import SOURCE_LABELS
 from .analysis_scope import DEDUPE_SCOPE, RAW_SCOPE
 from .plot_workbench import PlotWorkbench
 from .vos_panel import VOSPanel
@@ -76,10 +77,7 @@ from .year_filter import format_year_range, parse_year_range, partition_records_
 
 
 APP_TITLE = "多来源文献相关性筛选工具"
-APP_VERSION = "1.24.2"
-SOURCE_LABELS = {"wos": "Web of Science", "scopus": "Scopus", "pubmed": "PubMed",
-                 "sciencedirect": "ScienceDirect", "cnki": "CNKI", "wanfang": "万方",
-                 "vip": "维普", "yiigle": "中华医学库", "未识别": "未识别"}
+APP_VERSION = "1.25.0"
 PROVIDER_HYBRID = "Jev + DeepSeek 复核"
 PROVIDER_JEV = "TypeSafe Jev"
 PROVIDER_DEEPSEEK = "DeepSeek"

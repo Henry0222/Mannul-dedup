@@ -15,6 +15,8 @@ from .vos_defaults import (BUILD_KEYS, apply_graph_defaults, graph_defaults_path
 from .vos_network import (CITED_TYPES, NETWORK_TYPES, build_vos_network, filter_vos_network, inherit_vos_parameters,
                           node_citation_coverage, save_vos_network)
 from .vos_viewer import launch_viewer
+from .source_labels import SOURCE_LABELS
+from .vos_record_filter import (ALL_TITLES, TITLE_CHOICES, filter_vos_records)
 
 
 class VOSPanel(ttk.Frame):
@@ -26,6 +28,11 @@ class VOSPanel(ttk.Frame):
         self.max_var = tk.StringVar(value="80")
         self.keyword_var = tk.StringVar(value="作者关键词")
         self.scope_var = tk.StringVar(value=DEDUPE_SCOPE)
+        self.title_language_var = tk.StringVar(value=ALL_TITLES)
+        self.database_vars: dict[str, tk.BooleanVar] = {}
+        self.database_checks: dict[str, ttk.Checkbutton] = {}
+        self._saved_databases: set[str] | None = None
+        self.database_summary_var = tk.StringVar(value="导入文件后可选择用于建图的数据库。")
         self.status_var = tk.StringVar(value="先预览节点并勾选，再创建图谱。")
         self.count_var = tk.StringVar(value="")
         self.data: dict | None = None
@@ -40,11 +47,23 @@ class VOSPanel(ttk.Frame):
         self.desktop_exe = ""
 
         ttk.Label(self, text="VOS 图谱", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text="可选择全部导入题录或去重结果；节点筛选后可在内置窗口调整布局和聚类。",
+        ttk.Label(self, text="可选择题录范围和数据库；节点筛选后可在内置窗口调整布局和聚类。",
                   style="Hint.TLabel").pack(anchor="w", pady=(4, 12))
         controls = ttk.LabelFrame(self, text="建图选项", padding=12)
         controls.pack(fill="x")
         self._row(controls, "题录范围", self.scope_var, ANALYSIS_SCOPES)
+        database_line = ttk.Frame(controls)
+        database_line.pack(fill="x", pady=3)
+        ttk.Label(database_line, text="建图数据库", width=16).pack(side="left", anchor="n")
+        database_area = ttk.Frame(database_line)
+        database_area.pack(side="left", fill="x", expand=True)
+        self.database_controls = ttk.Frame(database_area)
+        self.database_controls.pack(fill="x")
+        ttk.Label(database_area, textvariable=self.database_summary_var,
+                  style="Hint.TLabel").pack(anchor="w", pady=(3, 0))
+        self._row(controls, "题名语言（可选）", self.title_language_var, TITLE_CHOICES)
+        ttk.Label(controls, text="仅按题名筛选题录；不会过滤关键词语言。默认包含全部题录。",
+                  style="Hint.TLabel").pack(anchor="w", padx=(106, 0))
         self._row(controls, "图谱类型", self.kind_var, tuple(NETWORK_TYPES.values()))
         self._row(controls, "关键词来源", self.keyword_var, ("作者关键词", "作者 + Keywords Plus"))
         self._entry(controls, "最少出现次数", self.min_var)
@@ -78,7 +97,8 @@ class VOSPanel(ttk.Frame):
         self.tree.bind("<Button-1>", self._on_click)
         ttk.Label(self, textvariable=self.status_var, wraplength=950, style="Hint.TLabel").pack(anchor="w", pady=(8, 0))
 
-        for var in (self.kind_var, self.min_var, self.max_var, self.keyword_var, self.scope_var):
+        for var in (self.kind_var, self.min_var, self.max_var, self.keyword_var,
+                    self.scope_var, self.title_language_var):
             var.trace_add("write", lambda *_args: self._settings_changed())
 
     @staticmethod
@@ -113,8 +133,12 @@ class VOSPanel(ttk.Frame):
         save_preferences(self.app.app_dir, build={key: self.settings()[key] for key in BUILD_KEYS})
 
     def settings(self) -> dict:
+        databases = (sorted(kind for kind, variable in self.database_vars.items() if variable.get())
+                     if self.database_vars else
+                     sorted(self._saved_databases) if self._saved_databases is not None else None)
         return {"kind": self.kind_var.get(), "min": self.min_var.get(), "max": self.max_var.get(),
                 "keyword_source": self.keyword_var.get(), "scope": self.scope_var.get(),
+                "title_language": self.title_language_var.get(), "databases": databases,
                 "excluded_labels": self.excluded_labels}
 
     def restore(self, settings: dict) -> None:
@@ -133,13 +157,24 @@ class VOSPanel(ttk.Frame):
             settings = global_preferences.get("build", {})
         if not isinstance(settings, dict):
             settings = {}
+        for check in self.database_checks.values():
+            check.destroy()
+        self.database_vars.clear()
+        self.database_checks.clear()
+        saved_databases = settings.get("databases")
+        self._saved_databases = (set(saved_databases) if isinstance(saved_databases, list) and
+                                 all(isinstance(kind, str) for kind in saved_databases) else None)
+        self.database_summary_var.set("导入文件后可选择用于建图的数据库。")
         self.excluded_labels = settings.get("excluded_labels", {}).copy()
         for name, variable, choices in (
             ("kind", self.kind_var, NETWORK_TYPES.values()),
             ("keyword_source", self.keyword_var, ("作者关键词", "作者 + Keywords Plus")),
-            ("scope", self.scope_var, ANALYSIS_SCOPES)):
+            ("scope", self.scope_var, ANALYSIS_SCOPES),
+            ("title_language", self.title_language_var, TITLE_CHOICES)):
             if settings.get(name) in choices:
                 variable.set(settings[name])
+            elif name == "title_language":
+                variable.set(ALL_TITLES)
         for name, variable in (("min", self.min_var), ("max", self.max_var)):
             if isinstance(settings.get(name), str) and settings[name].isdecimal():
                 variable.set(settings[name])
@@ -147,6 +182,33 @@ class VOSPanel(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         self._invalidate()
         self._restoring = False
+
+    def _sync_database_choices(self, scoped_records) -> None:
+        all_records = self.app.parsed.records if self.app.parsed else []
+        available = sorted({record.source_kind for record in all_records})
+        previous = set(self.database_vars)
+        selected = {kind for kind, variable in self.database_vars.items() if variable.get()}
+        if not previous:
+            selected = set(available) if self._saved_databases is None else self._saved_databases & set(available)
+        elif selected == previous:
+            selected.update(set(available) - previous)
+        counts: dict[str, int] = {}
+        for record in scoped_records:
+            counts[record.source_kind] = counts.get(record.source_kind, 0) + 1
+        if previous != set(available):
+            for check in self.database_checks.values():
+                check.destroy()
+            self.database_vars.clear()
+            self.database_checks.clear()
+            for index, kind in enumerate(available):
+                variable = tk.BooleanVar(value=kind in selected)
+                check = ttk.Checkbutton(self.database_controls, variable=variable)
+                check.grid(row=index // 3, column=index % 3, sticky="w", padx=(0, 16), pady=2)
+                variable.trace_add("write", lambda *_args: self._settings_changed())
+                self.database_vars[kind] = variable
+                self.database_checks[kind] = check
+        for kind, check in self.database_checks.items():
+            check.configure(text=f"{SOURCE_LABELS.get(kind, kind)} · {counts.get(kind, 0)} 篇")
 
     def _records(self):
         raw_scope = self.scope_var.get() == RAW_SCOPE
@@ -157,7 +219,12 @@ class VOSPanel(ttk.Frame):
             if not self.app.results or set(self.app.results) != {r.record_id for r in self.app.records}:
                 raise ValueError("当前项目尚无完整 AI 筛选结果。")
             records = [r for r in records if self.app.results[r.record_id].final_decision == "relevant"]
-        return records
+        self._sync_database_choices(records)
+        databases = {kind for kind, variable in self.database_vars.items() if variable.get()}
+        selected = filter_vos_records(records, databases, self.title_language_var.get())
+        self.database_summary_var.set(f"本次建图 {len(selected)} 篇 · 已选 {len(databases)} 个数据库；"
+                                      "中文数据库的英文关键词仍随题录保留。")
+        return selected
 
     def refresh(self, *, quiet=False):
         try:
@@ -166,7 +233,9 @@ class VOSPanel(ttk.Frame):
             source = "author_plus" if self.keyword_var.get() == "作者 + Keywords Plus" else "author"
             key = (self.app.project_data["id"], self.app.project_data.get("import_generation"),
                    len(records), kind, source, self.min_var.get(), self.max_var.get(),
-                   self.scope_var.get(), self.app.year_start_var.get(), self.app.year_end_var.get())
+                   self.scope_var.get(), self.app.year_start_var.get(), self.app.year_end_var.get(),
+                   tuple(sorted(kind for kind, var in self.database_vars.items() if var.get())),
+                   self.title_language_var.get())
             if key == self._preview_key:
                 return
             self.data = build_vos_network(records, kind, min_occurrences=int(self.min_var.get()),

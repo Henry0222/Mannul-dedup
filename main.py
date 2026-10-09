@@ -120,8 +120,9 @@ if __name__ == "__main__":
                             "PT J\nTI A study\nPY 2024\nAU Li, A\nSO Journal\nDI 10.1000/same\nDE aquatic systems; water systems; other topic\nER",
                             "wos.txt", 1, source_kind="wos")
             scopus = WosRecord({"TI": ["A study"], "PY": ["2024"], "AU": ["Li, A"],
-                                "SO": ["Journal"], "DI": ["10.1000/same"]},
-                               "PT J\nTI A study\nPY 2024\nAU Li, A\nSO Journal\nDI 10.1000/same\nER",
+                                "SO": ["Journal"], "DI": ["10.1000/same"],
+                                "DE": ["water systems; aquatic research"]},
+                               "PT J\nTI A study\nPY 2024\nAU Li, A\nSO Journal\nDI 10.1000/same\nDE water systems; aquatic research\nER",
                                "scopus.ris", 1, source_kind="scopus")
             app.raw_records = [wos, scopus]
             app.project_data["records"] = [record_to_json(item) for item in app.raw_records]
@@ -144,6 +145,21 @@ if __name__ == "__main__":
             app.vos_panel.refresh(quiet=True)
             if app.vos_panel.data is None:
                 raise RuntimeError("未去重题录未进入 VOS 建图")
+            from wos_filter.vos_record_filter import ALL_TITLES
+            if (app.vos_panel.title_language_var.get() != ALL_TITLES or
+                    set(app.vos_panel.database_vars) != {"wos", "scopus"} or
+                    len(app.vos_panel._records()) != 2):
+                raise RuntimeError("VOS 数据库多选或默认不限题名语言未初始化")
+            app.vos_panel.database_vars["wos"].set(False)
+            if [record.source_kind for record in app.vos_panel._records()] != ["scopus"]:
+                raise RuntimeError("VOS 节点题录没有遵循数据库选择")
+            app.vos_panel.refresh(quiet=True)
+            if app.vos_panel.data is None:
+                raise RuntimeError(f"VOS 选择单个数据库后不能建图：{app.vos_panel.status_var.get()}")
+            app.vos_panel.database_vars["wos"].set(True)
+            app.vos_panel.database_vars["scopus"].set(False)
+            if app.vos_panel.settings()["databases"] != ["wos"]:
+                raise RuntimeError("VOS 数据库选择未写入项目设置")
             run = new_run(app.records, "quick")
             run["import_generation"] = app.project_data["import_generation"]
             auto_review_run(run, app.records)
@@ -207,6 +223,9 @@ if __name__ == "__main__":
                 raise RuntimeError("重新加载后没有恢复去重记录")
             if app.plot_workbench.legend_names.get(edited_legend) != "Publication count":
                 raise RuntimeError("图例名称没有随项目保存")
+            if (app.vos_panel.settings()["databases"] != ["wos"] or
+                    app.vos_panel.title_language_var.get() != ALL_TITLES):
+                raise RuntimeError("VOS 数据库和题名语言选项没有随项目恢复")
             if app.plot_workbench.label_interval_var.get() != "0":
                 raise RuntimeError("新版本用户主动选择自动避让没有保存")
             app.plot_workbench.refresh()
