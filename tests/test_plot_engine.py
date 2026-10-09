@@ -100,15 +100,48 @@ class PlotEngineTests(unittest.TestCase):
                 rows.append({"year": year, "source": source, "papers": count, "citations": 0})
         figure = Figure(figsize=(10, 5))
         options = PlotOptions(chart_type="bar", trend_group="language", show_labels=True,
+                              label_size=15,
                               show_regression=True, regression_method="quadratic",
                               legend_labels={"英文发文量": "English", "中文发文量": "中文资料"})
         render_figure(figure, rows, options)
         ax = figure.axes[0]
         self.assertEqual(len([line for line in ax.lines if "回归曲线" in line.get_label()]), 2)
         self.assertEqual(len([item for item in ax.texts if "R²=" in item.get_text()]), 2)
-        self.assertGreater(len([item for item in ax.texts if item.get_text().isdecimal()]), 30)
+        numeric_labels = [item for item in ax.texts if item.get_text().isdecimal()]
+        self.assertGreaterEqual(len(numeric_labels), 25)
+        self.assertTrue(all(item.get_rotation() == 0 and item.get_fontsize() == 15
+                            for item in numeric_labels))
         self.assertTrue({"English", "中文资料"}.issubset(
             {item.get_text() for item in ax.get_legend().get_texts()}))
+        all_labels = Figure(figsize=(10, 5))
+        options.label_interval = 1
+        render_figure(all_labels, rows, options)
+        self.assertGreater(len([item for item in all_labels.axes[0].texts
+                                if item.get_text().isdecimal()]), len(numeric_labels))
+
+    def test_dense_r_styles_use_selected_horizontal_label_size(self) -> None:
+        rows = [{"year": year, "source": source, "papers": year - 1999 + index, "citations": 0}
+                for year in range(2000, 2031) for index, source in enumerate(("英文", "中文"))]
+        for chart_type in ("bilingual_quadratic", "gradient_combo"):
+            with self.subTest(chart_type=chart_type):
+                figure = Figure(figsize=(10, 5))
+                render_figure(figure, rows, PlotOptions(chart_type=chart_type,
+                                                       label_size=14, show_labels=True))
+                numeric_labels = [item for item in figure.axes[0].texts if item.get_text().isdecimal()]
+                self.assertGreater(len(numeric_labels), 10)
+                self.assertTrue(all(item.get_rotation() == 0 and item.get_fontsize() == 14
+                                    for item in numeric_labels))
+
+    def test_annual_label_interval_keeps_latest_year_and_can_show_every_year(self) -> None:
+        rows = [{"year": year, "source": "全部", "papers": year - 2019, "citations": 0}
+                for year in range(2020, 2030)]
+        for interval, expected in ((3, [1, 4, 7, 10]), (1, list(range(1, 11)))):
+            with self.subTest(interval=interval):
+                figure = Figure(figsize=(5, 4))
+                render_figure(figure, rows, PlotOptions(label_interval=interval, label_size=16))
+                labels = [int(item.get_text()) for item in figure.axes[0].texts
+                          if item.get_text().isdecimal()]
+                self.assertEqual(labels, expected)
 
     def test_missing_calendar_years_are_zero_and_evenly_spaced(self) -> None:
         records = sample_records()

@@ -78,6 +78,7 @@ class PlotWorkbench(ttk.Frame):
         self.show_labels_var = tk.BooleanVar(value=True)
         self.base_size_var = tk.StringVar(value=str(defaults.base_size))
         self.label_size_var = tk.StringVar(value=str(defaults.label_size))
+        self.label_interval_var = tk.StringVar(value=str(defaults.label_interval))
         self.year_angle_var = tk.StringVar(value="45")
         self.institution_angle_var = tk.StringVar(value="45")
         self.width_var = tk.StringVar(value="10")
@@ -173,6 +174,7 @@ class PlotWorkbench(ttk.Frame):
         self._check(labels, "显示数据标签", self.show_labels_var)
         self._entry(labels, "整体字体大小（8–30）", self.base_size_var)
         self._entry(labels, "数据标签大小（1–20）", self.label_size_var)
+        self._entry(labels, "数值标签间隔（0 自动，1 每年）", self.label_interval_var)
         self._entry(labels, "年份文字角度（0–90）", self.year_angle_var)
         self._entry(labels, "机构名称角度（0–90）", self.institution_angle_var)
 
@@ -233,7 +235,8 @@ class PlotWorkbench(ttk.Frame):
                    self.show_title_var, self.title_var, self.subtitle_var, self.show_legend_var,
                    self.legend_position_var, self.show_grid_var, self.show_axis_var,
                    self.x_axis_var, self.y_axis_var, self.y2_axis_var, self.show_labels_var,
-                   self.base_size_var, self.label_size_var, self.year_angle_var, self.institution_angle_var]
+                   self.base_size_var, self.label_size_var, self.label_interval_var,
+                   self.year_angle_var, self.institution_angle_var]
         for var in watched:
             var.trace_add("write", lambda *_: self.schedule_render())
         self.orientation_var.trace_add("write", lambda *_: self._update_high_choices())
@@ -426,6 +429,7 @@ class PlotWorkbench(ttk.Frame):
             y2_axis_title=self.y2_axis_var.get().strip(), show_labels=self.show_labels_var.get(),
             base_size=integer(self.base_size_var, 8, 30, "整体字体"),
             label_size=integer(self.label_size_var, 1, 20, "标签字体"),
+            label_interval=integer(self.label_interval_var, 0, 20, "数值标签间隔"),
             year_label_angle=integer(self.year_angle_var, 0, 90, "年份角度"),
             institution_label_angle=integer(self.institution_angle_var, 0, 90, "机构角度"),
             colors={key: value for key, value in colors.items() if key not in {"pie_start", "pie_end"}},
@@ -701,7 +705,7 @@ class PlotWorkbench(ttk.Frame):
                  "orientation", "high_position", "year_interval", "regression", "regression_method",
                  "equation", "show_title", "title", "subtitle", "show_legend", "legend_position",
                  "show_grid", "show_axis", "x_axis", "y_axis", "y2_axis", "show_labels", "base_size",
-                 "label_size", "year_angle", "institution_angle", "width", "height", "dpi", "palette")
+                 "label_size", "label_interval", "year_angle", "institution_angle", "width", "height", "dpi", "palette")
         result = {name: getattr(self, f"{name}_var").get() for name in names}
         result["colors"] = {name: var.get() for name, var in self.color_vars.items()}
         result["text_offsets"] = self.text_offsets

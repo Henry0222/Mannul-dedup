@@ -167,6 +167,11 @@ if __name__ == "__main__":
             app.plot_workbench.refresh()
             if sum(row["papers"] for row in app.plot_workbench.rows) != 1:
                 raise RuntimeError("基础去重结果没有正确进入年度趋势")
+            app.plot_workbench.label_size_var.set("15")
+            app.plot_workbench.label_interval_var.set("0")
+            chart_options = app.plot_workbench._plot_options()
+            if chart_options.label_size != 15 or chart_options.label_interval != 0:
+                raise RuntimeError("年度数值标签的字号或自动间隔没有进入绘图设置")
             if not app.plot_workbench.legend_name_vars:
                 raise RuntimeError("图例名称编辑框没有生成")
             edited_legend = next(iter(app.plot_workbench.legend_name_vars))

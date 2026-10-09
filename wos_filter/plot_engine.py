@@ -58,6 +58,7 @@ class PlotOptions:
     show_labels: bool = True
     base_size: int = 12
     label_size: int = 9
+    label_interval: int = 0
     year_label_angle: int = 45
     institution_label_angle: int = 45
     colors: dict[str, str] | None = None
@@ -195,6 +196,23 @@ def _series_color(name: str, index: int, colors: dict[str, str]) -> str:
     return colors.get(name.upper(), [colors["papers"], colors["citations"], "#8CB6CF", "#BD9BD0"][index % 4])
 
 
+def _annual_label_interval(ax, years: list[int], peak: float, options: PlotOptions) -> int:
+    """Space horizontal annual values according to the selected font and plot width."""
+    if options.label_interval:
+        return max(1, options.label_interval)
+    if not years:
+        return 1
+    digits = len(str(int(max(1, peak))))
+    available_points = ax.figure.get_figwidth() * 72 * .72
+    points_per_year = available_points / len(years)
+    label_points = options.label_size * .65 * digits * 1.15
+    return max(1, math.ceil(label_points / max(1, points_per_year)))
+
+
+def _annual_label_visible(index: int, count: int, interval: int) -> bool:
+    return index % interval == (count - 1) % interval
+
+
 def _decorate(ax, options: PlotOptions, *, x_default: str, y_default: str, is_year: bool = False) -> None:
     ax.set_facecolor("#FFFFFF")
     ax.spines["top"].set_visible(False)
@@ -230,6 +248,8 @@ def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, 
     sources = sorted({row["source"] for row in rows})
     metrics = ["papers", "citations"] if options.metric == "both" else [options.metric]
     series = [(source, metric) for source in sources for metric in metrics]
+    peak = max(row[metric] for row in rows for metric in metrics)
+    label_interval = _annual_label_interval(ax, years, peak, options)
     x = np.asarray(years, dtype=float)
     if options.chart_type == "dual_axis":
         by_year = {year: {"papers": 0, "citations": 0} for year in years}
@@ -274,9 +294,10 @@ def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, 
                 bars = ax.bar(offsets, values, width=width * .9, label=label, color=color)
                 if options.show_labels:
                     dense = len(years) * len(series) > 30
-                    ax.bar_label(bars, labels=[str(value) if value else "" for value in values],
-                                 fontsize=min(options.label_size, 7) if dense else options.label_size,
-                                 rotation=90 if dense else 0, padding=2,
+                    ax.bar_label(bars, labels=[str(value) if value and _annual_label_visible(i, len(years), label_interval)
+                                               else "" for i, value in enumerate(values)],
+                                 fontsize=options.label_size, rotation=0,
+                                 padding=2 + index * options.label_size if dense else 2,
                                  color=colors["label"])
             if options.show_labels and options.chart_type in {"line", "point"} and len(years) * len(series) <= 30:
                 for xi, yi in zip(x, values):
@@ -304,8 +325,7 @@ def _render_trend(ax, rows: list[dict], options: PlotOptions, colors: dict[str, 
                     _regression(ax, x, totals, options, series_colors, np,
                                 "发文量" if metric == "papers" else "引用量", .96 - index * .12)
         if options.show_labels and options.chart_type == "bar":
-            peak = max(row[metric] for row in rows for metric in metrics)
-            ax.set_ylim(top=max(ax.get_ylim()[1], peak * 1.18 + 1))
+            ax.set_ylim(top=max(ax.get_ylim()[1], peak * (1.35 if len(years) * len(series) > 30 else 1.18) + 1))
     ax.set_xticks(x[::max(1, options.year_interval)], [str(y) for y in years[::max(1, options.year_interval)]])
     ax.set_xlim(x[0] - .6, x[-1] + .6)
     _decorate(ax, options, x_default="年份", y_default="发文量" if options.metric != "citations" else "引用量", is_year=True)
@@ -318,16 +338,17 @@ def _render_gradient_combo(ax, rows: list[dict], options: PlotOptions, colors: d
     values = np.asarray([sum(row["papers"] for row in rows if row["year"] == year)
                          for year in years], dtype=float)
     x = np.asarray(years, dtype=float)
+    label_interval = _annual_label_interval(ax, years, float(values.max()), options)
     gradient = LinearSegmentedColormap.from_list("annual_publications", ["#ADD8E6", "#00008B"])
     normalizer = Normalize(vmin=0, vmax=max(1, float(values.max())))
     ax.bar(x, values, width=.7, color=[gradient(normalizer(value)) for value in values], alpha=.8)
     ax.plot(x, values, color="#CD5C5C", linewidth=1.2, marker="o", markersize=4)
     if options.show_labels:
-        for year, value in zip(years, values):
-            if value:
+        for index, (year, value) in enumerate(zip(years, values)):
+            if value and _annual_label_visible(index, len(years), label_interval):
                 ax.annotate(f"{value:g}", (year, value), xytext=(0, 7), textcoords="offset points",
-                            ha="center", fontsize=min(options.label_size, 7) if len(years) > 60 else options.label_size,
-                            rotation=90 if len(years) > 60 else 0, color="#323232", weight="bold")
+                            ha="center", fontsize=options.label_size,
+                            rotation=0, color="#323232", weight="bold")
     ax.set_ylim(0, max(1, float(values.max()) * 1.35))
     ax.set_xticks(x[::options.year_interval])
     ax.set_xlim(x[0] - .6, x[-1] + .6)
@@ -349,6 +370,7 @@ def _render_bilingual_quadratic(ax, rows: list[dict], options: PlotOptions,
     width = .7 / len(sources)
     palette = {"英文": colors.get("英文", "#86C058"), "中文": colors.get("中文", "#00BFE0")}
     peak = max(1, max(row["papers"] for row in rows))
+    label_interval = _annual_label_interval(ax, years, peak, options)
     equations = []
     for index, source in enumerate(sources):
         by_year = {row["year"]: row["papers"] for row in rows if row["source"] == source}
@@ -357,12 +379,11 @@ def _render_bilingual_quadratic(ax, rows: list[dict], options: PlotOptions,
         bars = ax.bar(x + offset, values, width=width * .9, color=palette[source],
                       alpha=.6, label=source)
         if options.show_labels:
-            for bar, value in zip(bars, values):
-                if value:
+            for year_index, (bar, value) in enumerate(zip(bars, values)):
+                if value and _annual_label_visible(year_index, len(years), label_interval):
                     ax.annotate(f"{value:g}", (bar.get_x() + bar.get_width() / 2, value),
-                                xytext=(0, 5), textcoords="offset points", ha="center",
-                                fontsize=min(options.label_size, 7) if len(years) * len(sources) > 30 else options.label_size,
-                                rotation=90 if len(years) * len(sources) > 30 else 0,
+                                xytext=(0, 5 + index * options.label_size), textcoords="offset points", ha="center",
+                                fontsize=options.label_size, rotation=0,
                                 color="#323232")
         observed = np.asarray([year for year in years if by_year.get(year, 0) > 0], dtype=float)
         if len(observed) < 3:
